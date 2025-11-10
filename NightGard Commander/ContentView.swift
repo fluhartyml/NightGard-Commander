@@ -6,83 +6,174 @@
 //
 
 import SwiftUI
-import CoreData
+
+enum FocusedPane {
+    case left, right
+}
 
 struct ContentView: View {
-    @Environment(\.managedObjectContext) private var viewContext
+    @State private var leftFileSystem = FileSystemService()
+    @State private var rightFileSystem = FileSystemService()
+    @State private var focusedPane: FocusedPane = .left
+    @State private var selectedLeftItem: FileItem?
+    @State private var selectedRightItem: FileItem?
+    @State private var showNewFolderSheet = false
+    @State private var newFolderName = ""
 
-    @FetchRequest(
-        sortDescriptors: [NSSortDescriptor(keyPath: \Item.timestamp, ascending: true)],
-        animation: .default)
-    private var items: FetchedResults<Item>
+    var activeFocusedFileSystem: FileSystemService {
+        focusedPane == .left ? leftFileSystem : rightFileSystem
+    }
+
+    var activeSelectedItem: FileItem? {
+        focusedPane == .left ? selectedLeftItem : selectedRightItem
+    }
 
     var body: some View {
-        NavigationView {
-            List {
-                ForEach(items) { item in
-                    NavigationLink {
-                        Text("Item at \(item.timestamp!, formatter: itemFormatter)")
-                    } label: {
-                        Text(item.timestamp!, formatter: itemFormatter)
+        VStack(spacing: 0) {
+            // Dual-pane layout
+            HStack(spacing: 0) {
+                // Left pane
+                FileBrowserPanel(
+                    fileSystem: leftFileSystem,
+                    isFocused: focusedPane == .left,
+                    onFocus: { focusedPane = .left },
+                    onItemSelect: { item in
+                        selectedLeftItem = item
+                        if item.isDirectory {
+                            leftFileSystem.navigateToFolder(item.path)
+                        }
                     }
-                }
-                .onDelete(perform: deleteItems)
-            }
-            .toolbar {
-#if os(iOS)
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    EditButton()
-                }
-#endif
-                ToolbarItem {
-                    Button(action: addItem) {
-                        Label("Add Item", systemImage: "plus")
+                )
+
+                Divider()
+
+                // Right pane
+                FileBrowserPanel(
+                    fileSystem: rightFileSystem,
+                    isFocused: focusedPane == .right,
+                    onFocus: { focusedPane = .right },
+                    onItemSelect: { item in
+                        selectedRightItem = item
+                        if item.isDirectory {
+                            rightFileSystem.navigateToFolder(item.path)
+                        }
                     }
-                }
+                )
             }
-            Text("Select an item")
+
+            Divider()
+
+            // Footer with file operations
+            HStack(spacing: 12) {
+                Button("New Folder") {
+                    newFolderName = ""
+                    showNewFolderSheet = true
+                }
+                .buttonStyle(.bordered)
+
+                Button("Delete") {
+                    deleteSelectedItem()
+                }
+                .buttonStyle(.bordered)
+                .disabled(activeSelectedItem == nil)
+
+                Button("Refresh") {
+                    activeFocusedFileSystem.loadFiles()
+                }
+                .buttonStyle(.bordered)
+
+                Spacer()
+
+                Text(focusedPane == .left ? "Left Pane Active" : "Right Pane Active")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            .padding(8)
+            .background(Color.secondary.opacity(0.05))
+        }
+        .sheet(isPresented: $showNewFolderSheet) {
+            NewFolderSheet(
+                folderName: $newFolderName,
+                onCreate: {
+                    createNewFolder()
+                    showNewFolderSheet = false
+                },
+                onCancel: {
+                    showNewFolderSheet = false
+                }
+            )
         }
     }
 
-    private func addItem() {
-        withAnimation {
-            let newItem = Item(context: viewContext)
-            newItem.timestamp = Date()
+    private func createNewFolder() {
+        guard !newFolderName.isEmpty else { return }
 
-            do {
-                try viewContext.save()
-            } catch {
-                // Replace this implementation with code to handle the error appropriately.
-                // fatalError() causes the application to generate a crash log and terminate. You should not use this function in a shipping application, although it may be useful during development.
-                let nsError = error as NSError
-                fatalError("Unresolved error \(nsError), \(nsError.userInfo)")
-            }
+        do {
+            try activeFocusedFileSystem.createFolder(name: newFolderName)
+        } catch {
+            print("Error creating folder: \(error.localizedDescription)")
         }
     }
 
-    private func deleteItems(offsets: IndexSet) {
-        withAnimation {
-            offsets.map { items[$0] }.forEach(viewContext.delete)
+    private func deleteSelectedItem() {
+        guard let item = activeSelectedItem else { return }
 
-            do {
-                try viewContext.save()
-            } catch {
-                // Replace this implementation with code to handle the error appropriately.
-                // fatalError() causes the application to generate a crash log and terminate. You should not use this function in a shipping application, although it may be useful during development.
-                let nsError = error as NSError
-                fatalError("Unresolved error \(nsError), \(nsError.userInfo)")
+        do {
+            try activeFocusedFileSystem.deleteItem(at: item.path)
+
+            // Clear selection
+            if focusedPane == .left {
+                selectedLeftItem = nil
+            } else {
+                selectedRightItem = nil
             }
+        } catch {
+            print("Error deleting item: \(error.localizedDescription)")
         }
     }
 }
 
-private let itemFormatter: DateFormatter = {
-    let formatter = DateFormatter()
-    formatter.dateStyle = .short
-    formatter.timeStyle = .medium
-    return formatter
-}()
+struct NewFolderSheet: View {
+    @Binding var folderName: String
+    let onCreate: () -> Void
+    let onCancel: () -> Void
+    @FocusState private var isTextFieldFocused: Bool
+
+    var body: some View {
+        VStack(spacing: 20) {
+            Text("Create New Folder")
+                .font(.headline)
+
+            TextField("Folder name", text: $folderName)
+                .textFieldStyle(.roundedBorder)
+                .focused($isTextFieldFocused)
+                .onSubmit {
+                    if !folderName.isEmpty {
+                        onCreate()
+                    }
+                }
+
+            HStack(spacing: 12) {
+                Button("Cancel") {
+                    onCancel()
+                }
+                .keyboardShortcut(.cancelAction)
+
+                Button("Create") {
+                    onCreate()
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(folderName.isEmpty)
+            }
+        }
+        .padding(20)
+        .frame(width: 300)
+        .onAppear {
+            isTextFieldFocused = true
+        }
+    }
+}
 
 #Preview {
-    ContentView().environment(\.managedObjectContext, PersistenceController.preview.container.viewContext)
+    ContentView()
 }
