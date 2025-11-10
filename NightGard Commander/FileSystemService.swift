@@ -12,12 +12,39 @@ class FileSystemService {
     var currentPath: String
     var files: [FileItem] = []
     var errorMessage: String?
+    var mountedVolumes: [VolumeItem] = []
 
     private let fileManager = FileManager.default
 
     init(startPath: String = NSHomeDirectory()) {
         self.currentPath = startPath
+        loadMountedVolumes()
         loadFiles()
+    }
+
+    func loadMountedVolumes() {
+        guard let urls = fileManager.mountedVolumeURLs(includingResourceValuesForKeys: [.volumeNameKey], options: [.skipHiddenVolumes]) else {
+            mountedVolumes = []
+            return
+        }
+
+        mountedVolumes = urls.compactMap { url in
+            let volumeName = (try? url.resourceValues(forKeys: [.volumeNameKey]))?.volumeName ?? url.lastPathComponent
+            return VolumeItem(name: volumeName, path: url.path)
+        }
+    }
+
+    var breadcrumbs: [BreadcrumbItem] {
+        let components = currentPath.split(separator: "/").map(String.init)
+        var breadcrumbs: [BreadcrumbItem] = [BreadcrumbItem(name: "/", path: "/")]
+
+        var buildPath = ""
+        for component in components {
+            buildPath += "/" + component
+            breadcrumbs.append(BreadcrumbItem(name: component, path: buildPath))
+        }
+
+        return breadcrumbs
     }
 
     func loadFiles() {
@@ -28,19 +55,23 @@ class FileSystemService {
             let url = URL(fileURLWithPath: currentPath)
             let contents = try fileManager.contentsOfDirectory(
                 at: url,
-                includingPropertiesForKeys: [.isDirectoryKey, .fileSizeKey, .contentModificationDateKey],
+                includingPropertiesForKeys: [.isDirectoryKey, .fileSizeKey, .contentModificationDateKey, .isSymbolicLinkKey],
                 options: [.skipsHiddenFiles]
             )
 
             files = contents.compactMap { url -> FileItem? in
-                guard let resourceValues = try? url.resourceValues(forKeys: [.isDirectoryKey, .fileSizeKey, .contentModificationDateKey]) else {
+                guard let resourceValues = try? url.resourceValues(forKeys: [.isDirectoryKey, .fileSizeKey, .contentModificationDateKey, .isSymbolicLinkKey]) else {
                     return nil
                 }
+
+                // Check if it's a directory (handles both regular directories and symlinks to directories)
+                var targetIsDir: ObjCBool = false
+                let actualIsDirectory = fileManager.fileExists(atPath: url.path, isDirectory: &targetIsDir) && targetIsDir.boolValue
 
                 return FileItem(
                     name: url.lastPathComponent,
                     path: url.path,
-                    isDirectory: resourceValues.isDirectory ?? false,
+                    isDirectory: actualIsDirectory,
                     size: resourceValues.fileSize ?? 0,
                     modificationDate: resourceValues.contentModificationDate ?? Date()
                 )
@@ -53,7 +84,7 @@ class FileSystemService {
             }
 
         } catch {
-            errorMessage = "Error loading directory: \(error.localizedDescription)"
+            errorMessage = "Error loading directory '\(currentPath)': \(error.localizedDescription)"
         }
     }
 
@@ -117,4 +148,16 @@ struct FileItem: Identifiable, Hashable {
     static func == (lhs: FileItem, rhs: FileItem) -> Bool {
         lhs.id == rhs.id
     }
+}
+
+struct VolumeItem: Identifiable {
+    let id = UUID()
+    let name: String
+    let path: String
+}
+
+struct BreadcrumbItem: Identifiable {
+    let id = UUID()
+    let name: String
+    let path: String
 }

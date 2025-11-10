@@ -19,6 +19,10 @@ struct ContentView: View {
     @State private var selectedRightItem: FileItem?
     @State private var showNewFolderSheet = false
     @State private var newFolderName = ""
+    @State private var showTextEditor = false
+    @State private var showAudioPlayer = false
+    @State private var showImagePreview = false
+    @State private var previewItem: FileItem?
 
     var activeFocusedFileSystem: FileSystemService {
         focusedPane == .left ? leftFileSystem : rightFileSystem
@@ -26,6 +30,39 @@ struct ContentView: View {
 
     var activeSelectedItem: FileItem? {
         focusedPane == .left ? selectedLeftItem : selectedRightItem
+    }
+
+    func getFileType(for item: FileItem) -> FileType {
+        guard !item.isDirectory else { return .folder }
+        let ext = (item.name as NSString).pathExtension.lowercased()
+
+        if ["txt", "md", "rb", "json", "swift", "log", "xml", "yaml", "yml"].contains(ext) {
+            return .text
+        } else if ["mp3", "m4a", "wav", "aiff", "aac", "flac", "ogg"].contains(ext) {
+            return .audio
+        } else if ["png", "jpg", "jpeg", "gif", "bmp", "tiff", "heic", "webp"].contains(ext) {
+            return .image
+        } else {
+            return .other
+        }
+    }
+
+    func handleDoubleClick(item: FileItem) {
+        let fileType = getFileType(for: item)
+        previewItem = item
+
+        switch fileType {
+        case .folder:
+            activeFocusedFileSystem.navigateToFolder(item.path)
+        case .text:
+            showTextEditor = true
+        case .audio:
+            showAudioPlayer = true
+        case .image:
+            showImagePreview = true
+        case .other:
+            break // Do nothing for unknown file types
+        }
     }
 
     var body: some View {
@@ -39,9 +76,11 @@ struct ContentView: View {
                     onFocus: { focusedPane = .left },
                     onItemSelect: { item in
                         selectedLeftItem = item
-                        if item.isDirectory {
-                            leftFileSystem.navigateToFolder(item.path)
-                        }
+                    },
+                    onItemDoubleClick: { item in
+                        focusedPane = .left
+                        selectedLeftItem = item
+                        handleDoubleClick(item: item)
                     }
                 )
 
@@ -54,9 +93,11 @@ struct ContentView: View {
                     onFocus: { focusedPane = .right },
                     onItemSelect: { item in
                         selectedRightItem = item
-                        if item.isDirectory {
-                            rightFileSystem.navigateToFolder(item.path)
-                        }
+                    },
+                    onItemDoubleClick: { item in
+                        focusedPane = .right
+                        selectedRightItem = item
+                        handleDoubleClick(item: item)
                     }
                 )
             }
@@ -76,11 +117,6 @@ struct ContentView: View {
                 }
                 .buttonStyle(.bordered)
                 .disabled(activeSelectedItem == nil)
-
-                Button("Refresh") {
-                    activeFocusedFileSystem.loadFiles()
-                }
-                .buttonStyle(.bordered)
 
                 Spacer()
 
@@ -102,6 +138,39 @@ struct ContentView: View {
                     showNewFolderSheet = false
                 }
             )
+        }
+        .sheet(isPresented: $showTextEditor) {
+            if let item = previewItem {
+                TextFileEditor(
+                    filePath: item.path,
+                    fileName: item.name,
+                    onClose: {
+                        showTextEditor = false
+                    }
+                )
+            }
+        }
+        .sheet(isPresented: $showAudioPlayer) {
+            if let item = previewItem {
+                AudioPlayer(
+                    filePath: item.path,
+                    fileName: item.name,
+                    onClose: {
+                        showAudioPlayer = false
+                    }
+                )
+            }
+        }
+        .sheet(isPresented: $showImagePreview) {
+            if let item = previewItem {
+                ImagePreview(
+                    filePath: item.path,
+                    fileName: item.name,
+                    onClose: {
+                        showImagePreview = false
+                    }
+                )
+            }
         }
     }
 
@@ -131,6 +200,10 @@ struct ContentView: View {
             print("Error deleting item: \(error.localizedDescription)")
         }
     }
+}
+
+enum FileType {
+    case folder, text, audio, image, other
 }
 
 struct NewFolderSheet: View {
