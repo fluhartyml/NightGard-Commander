@@ -1,6 +1,7 @@
 {
   "images" : [
     {
+      "filename" : "NGCommander Icon  1024 x 1024.jpeg",
       "idiom" : "universal",
       "platform" : "ios",
       "size" : "1024x1024"
@@ -12,6 +13,7 @@
           "value" : "dark"
         }
       ],
+      "filename" : "NGCommander Icon  1024 x 1025.jpeg",
       "idiom" : "universal",
       "platform" : "ios",
       "size" : "1024x1024"
@@ -23,56 +25,67 @@
           "value" : "tinted"
         }
       ],
+      "filename" : "NGCommander Icon  1024 x 1026.jpeg",
       "idiom" : "universal",
       "platform" : "ios",
       "size" : "1024x1024"
     },
     {
+      "filename" : "NGCommander Icon  16 x 16.jpeg",
       "idiom" : "mac",
       "scale" : "1x",
       "size" : "16x16"
     },
     {
+      "filename" : "NGCommander Icon  32 x 32.jpeg",
       "idiom" : "mac",
       "scale" : "2x",
       "size" : "16x16"
     },
     {
+      "filename" : "NGCommander Icon  32 x 33.jpeg",
       "idiom" : "mac",
       "scale" : "1x",
       "size" : "32x32"
     },
     {
+      "filename" : "NGCommander Icon  64 x 64.jpeg",
       "idiom" : "mac",
       "scale" : "2x",
       "size" : "32x32"
     },
     {
+      "filename" : "NGCommander Icon  128 x 128.jpeg",
       "idiom" : "mac",
       "scale" : "1x",
       "size" : "128x128"
     },
     {
+      "filename" : "NGCommander Icon  256 x 256.jpeg",
       "idiom" : "mac",
       "scale" : "2x",
       "size" : "128x128"
     },
     {
+      "filename" : "NGCommander Icon  256 x 257.jpeg",
       "idiom" : "mac",
       "scale" : "1x",
       "size" : "256x256"
     },
     {
+      "filename" : "NGCommander Icon  512 x 512.jpeg",
       "idiom" : "mac",
       "scale" : "2x",
       "size" : "256x256"
     },
     {
+      "filename" : "NGCommander Icon  512 x 513.jpeg",
       "idiom" : "mac",
       "scale" : "1x",
       "size" : "512x512"
     },
     {
+      "filename" : "NGCommander Icon  1024 x 1027.jpeg",
       "idiom" : "mac",
       "scale" : "2x",
       "size" : "512x512"
