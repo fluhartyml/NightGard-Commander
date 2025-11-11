@@ -13,8 +13,21 @@ struct FileBrowserPanel: View {
     let onFocus: () -> Void
     let onItemSelect: (FileItem) -> Void
     let onItemDoubleClick: (FileItem) -> Void
+    @Binding var currentMedia: FileItem?
+    @Binding var showMediaPlayer: Bool
+    @Binding var autoPlayNext: Bool
+    @Binding var autoPlayOpposite: Bool
+    let onSwitchToOpposite: () -> Void
+    let otherPanePath: String
 
     @State private var selectedItem: FileItem?
+    @State private var isCreatingNewFolder = false
+    @State private var isCreatingNewFile = false
+    @State private var newItemName = "untitled"
+    @State private var renamingItem: FileItem?
+    @State private var renameText = ""
+    @FocusState private var isNewItemFocused: Bool
+    @FocusState private var isRenameFocused: Bool
 
     var body: some View {
         VStack(spacing: 0) {
@@ -72,36 +85,104 @@ struct FileBrowserPanel: View {
                     .padding()
                 Spacer()
             } else if fileSystem.files.isEmpty {
-                Text("Empty folder")
-                    .foregroundColor(.secondary)
-                    .padding()
-                Spacer()
+                VStack {
+                    Text("Empty folder")
+                        .foregroundColor(.secondary)
+                        .padding()
+                    Spacer()
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .contentShape(Rectangle())
+                .contextMenu {
+                    Button("New Folder") {
+                        startCreatingFolder()
+                    }
+                    Button("New File") {
+                        startCreatingFile()
+                    }
+                }
             } else {
-                List(fileSystem.files, selection: $selectedItem) { item in
-                    HStack(spacing: 8) {
-                        Image(systemName: item.isDirectory ? "folder.fill" : "doc.fill")
-                            .foregroundColor(item.isDirectory ? .blue : .secondary)
-                            .frame(width: 20)
+                List(selection: $selectedItem) {
+                    // Inline new item creation
+                    if isCreatingNewFolder || isCreatingNewFile {
+                        HStack(spacing: 8) {
+                            Image(systemName: isCreatingNewFolder ? "folder.fill" : "doc.fill")
+                                .foregroundColor(isCreatingNewFolder ? .blue : .secondary)
+                                .frame(width: 20)
 
-                        Text(item.name)
-                            .lineLimit(1)
-
-                        Spacer()
-
-                        Text(item.displaySize)
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .frame(width: 60, alignment: .trailing)
-
-                        Text(item.displayDate)
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .frame(width: 120, alignment: .trailing)
+                            TextField("Name", text: $newItemName)
+                                .textFieldStyle(.plain)
+                                .focused($isNewItemFocused)
+                                .onSubmit {
+                                    createInlineItem()
+                                }
+                                .onKeyPress(.escape) {
+                                    cancelInlineCreation()
+                                    return .handled
+                                }
+                                .onAppear {
+                                    isNewItemFocused = true
+                                }
+                        }
+                        .padding(.vertical, 4)
                     }
-                    .tag(item)
-                    .onTapGesture(count: 2) {
-                        onItemDoubleClick(item)
-                    }
+
+                    // Regular file list
+                    ForEach(fileSystem.files) { item in
+                        HStack(spacing: 8) {
+                            Image(systemName: item.isDirectory ? "folder.fill" : "doc.fill")
+                                .foregroundColor(item.isDirectory ? .blue : .secondary)
+                                .frame(width: 20)
+
+                            if renamingItem?.id == item.id {
+                                TextField("Name", text: $renameText)
+                                    .textFieldStyle(.plain)
+                                    .focused($isRenameFocused)
+                                    .onSubmit {
+                                        commitRename(item: item)
+                                    }
+                                    .onKeyPress(.escape) {
+                                        cancelRename()
+                                        return .handled
+                                    }
+                                    .onAppear {
+                                        isRenameFocused = true
+                                    }
+                            } else {
+                                Text(item.name)
+                                    .lineLimit(1)
+                            }
+
+                            Spacer()
+
+                            if renamingItem?.id != item.id {
+                                Text(item.displaySize)
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                    .frame(width: 60, alignment: .trailing)
+
+                                Text(item.displayDate)
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                    .frame(width: 120, alignment: .trailing)
+                            }
+                        }
+                        .tag(item)
+                        .onTapGesture(count: 2) {
+                            onItemDoubleClick(item)
+                        }
+                        .contextMenu {
+                            Button("Rename") {
+                                startRenaming(item: item)
+                            }
+                            Button("Delete") {
+                                deleteItem(item: item)
+                            }
+                            Divider()
+                            Button("Move to Other Pane") {
+                                moveToOtherPane(item: item)
+                            }
+                        }
                     .draggable(item.path) {
                         Label(item.name, systemImage: item.isDirectory ? "folder.fill" : "doc.fill")
                     }
@@ -122,15 +203,34 @@ struct FileBrowserPanel: View {
                         fileSystem.loadFiles()
                         return true
                     }
+                    }
                 }
                 .listStyle(.plain)
-                .onChange(of: selectedItem) { newValue in
+                .contextMenu {
+                    Button("New Folder") {
+                        startCreatingFolder()
+                    }
+                    Button("New File") {
+                        startCreatingFile()
+                    }
+                }
+                .onChange(of: selectedItem) { oldValue, newValue in
                     if let item = newValue {
                         onFocus()
                         onItemSelect(item)
                     }
                 }
             }
+
+            // In-pane media player (shows only when playing)
+            InPaneMediaPlayer(
+                currentMedia: $currentMedia,
+                isVisible: $showMediaPlayer,
+                autoPlayNext: $autoPlayNext,
+                autoPlayOpposite: $autoPlayOpposite,
+                fileSystem: fileSystem,
+                onSwitchToOpposite: onSwitchToOpposite
+            )
 
             // Breadcrumbs footer
             Divider()
@@ -166,6 +266,91 @@ struct FileBrowserPanel: View {
         }
         .onAppear {
             fileSystem.loadFiles()
+        }
+    }
+
+    private func startCreatingFolder() {
+        onFocus()
+        newItemName = "untitled folder"
+        isCreatingNewFolder = true
+        isCreatingNewFile = false
+    }
+
+    private func startCreatingFile() {
+        onFocus()
+        newItemName = "untitled.txt"
+        isCreatingNewFile = true
+        isCreatingNewFolder = false
+    }
+
+    private func createInlineItem() {
+        guard !newItemName.isEmpty else {
+            cancelInlineCreation()
+            return
+        }
+
+        do {
+            if isCreatingNewFolder {
+                try fileSystem.createFolder(name: newItemName)
+            } else if isCreatingNewFile {
+                try fileSystem.createFile(name: newItemName)
+            }
+            cancelInlineCreation()
+        } catch {
+            print("Error creating item: \(error)")
+        }
+    }
+
+    private func cancelInlineCreation() {
+        isCreatingNewFolder = false
+        isCreatingNewFile = false
+        newItemName = "untitled"
+    }
+
+    private func startRenaming(item: FileItem) {
+        renamingItem = item
+        renameText = item.name
+    }
+
+    private func commitRename(item: FileItem) {
+        guard !renameText.isEmpty, renameText != item.name else {
+            cancelRename()
+            return
+        }
+
+        do {
+            let oldURL = URL(fileURLWithPath: item.path)
+            let newURL = oldURL.deletingLastPathComponent().appendingPathComponent(renameText)
+            try FileManager.default.moveItem(at: oldURL, to: newURL)
+            fileSystem.loadFiles()
+            cancelRename()
+        } catch {
+            print("Error renaming item: \(error)")
+        }
+    }
+
+    private func cancelRename() {
+        renamingItem = nil
+        renameText = ""
+    }
+
+    private func deleteItem(item: FileItem) {
+        do {
+            try fileSystem.deleteItem(at: item.path)
+        } catch {
+            print("Error deleting item: \(error)")
+        }
+    }
+
+    private func moveToOtherPane(item: FileItem) {
+        do {
+            let sourceURL = URL(fileURLWithPath: item.path)
+            let fileName = sourceURL.lastPathComponent
+            let destURL = URL(fileURLWithPath: otherPanePath).appendingPathComponent(fileName)
+            try FileManager.default.moveItem(at: sourceURL, to: destURL)
+            fileSystem.loadFiles()
+        } catch {
+            print("Error moving to other pane: \(error)")
         }
     }
 }

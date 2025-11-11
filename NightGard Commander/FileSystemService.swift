@@ -105,6 +105,12 @@ class FileSystemService {
         loadFiles()
     }
 
+    func createFile(name: String) throws {
+        let fileURL = URL(fileURLWithPath: currentPath).appendingPathComponent(name)
+        fileManager.createFile(atPath: fileURL.path, contents: nil, attributes: nil)
+        loadFiles()
+    }
+
     func deleteItem(at path: String) throws {
         let url = URL(fileURLWithPath: path)
         try fileManager.removeItem(at: url)

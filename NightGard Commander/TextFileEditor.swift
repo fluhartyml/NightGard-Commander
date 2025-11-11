@@ -58,7 +58,7 @@ struct TextFileEditor: View {
                 TextEditor(text: $fileContents)
                     .font(.system(.body, design: .monospaced))
                     .padding(8)
-                    .onChange(of: fileContents) { _ in
+                    .onChange(of: fileContents) {
                         hasChanges = true
                     }
             }

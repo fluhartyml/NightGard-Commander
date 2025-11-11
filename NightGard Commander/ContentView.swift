@@ -17,12 +17,21 @@ struct ContentView: View {
     @State private var focusedPane: FocusedPane = .left
     @State private var selectedLeftItem: FileItem?
     @State private var selectedRightItem: FileItem?
-    @State private var showNewFolderSheet = false
-    @State private var newFolderName = ""
     @State private var showTextEditor = false
-    @State private var showAudioPlayer = false
     @State private var showImagePreview = false
     @State private var previewItem: FileItem?
+
+    // Left pane media player state
+    @State private var leftCurrentMedia: FileItem?
+    @State private var showLeftMediaPlayer = false
+    @State private var autoPlayNextLeft = true
+    @State private var autoPlayOppositeLeft = false
+
+    // Right pane media player state
+    @State private var rightCurrentMedia: FileItem?
+    @State private var showRightMediaPlayer = false
+    @State private var autoPlayNextRight = true
+    @State private var autoPlayOppositeRight = false
 
     var activeFocusedFileSystem: FileSystemService {
         focusedPane == .left ? leftFileSystem : rightFileSystem
@@ -40,6 +49,8 @@ struct ContentView: View {
             return .text
         } else if ["mp3", "m4a", "wav", "aiff", "aac", "flac", "ogg"].contains(ext) {
             return .audio
+        } else if ["mp4", "mov", "m4v", "avi", "mkv"].contains(ext) {
+            return .video
         } else if ["png", "jpg", "jpeg", "gif", "bmp", "tiff", "heic", "webp"].contains(ext) {
             return .image
         } else {
@@ -56,12 +67,47 @@ struct ContentView: View {
             activeFocusedFileSystem.navigateToFolder(item.path)
         case .text:
             showTextEditor = true
-        case .audio:
-            showAudioPlayer = true
+        case .audio, .video:
+            startPlayingMedia(item: item)
         case .image:
             showImagePreview = true
         case .other:
             break // Do nothing for unknown file types
+        }
+    }
+
+    func startPlayingMedia(item: FileItem) {
+        // Set media for the appropriate pane
+        if focusedPane == .left {
+            leftCurrentMedia = item
+            showLeftMediaPlayer = true
+        } else {
+            rightCurrentMedia = item
+            showRightMediaPlayer = true
+        }
+    }
+
+    func switchLeftToRight() {
+        // Start playing first media file in right pane
+        let rightMedia = rightFileSystem.files.filter { file in
+            let type = getFileType(for: file)
+            return type == .audio || type == .video
+        }
+        if let first = rightMedia.first {
+            rightCurrentMedia = first
+            showRightMediaPlayer = true
+        }
+    }
+
+    func switchRightToLeft() {
+        // Start playing first media file in left pane
+        let leftMedia = leftFileSystem.files.filter { file in
+            let type = getFileType(for: file)
+            return type == .audio || type == .video
+        }
+        if let first = leftMedia.first {
+            leftCurrentMedia = first
+            showLeftMediaPlayer = true
         }
     }
 
@@ -81,7 +127,13 @@ struct ContentView: View {
                         focusedPane = .left
                         selectedLeftItem = item
                         handleDoubleClick(item: item)
-                    }
+                    },
+                    currentMedia: $leftCurrentMedia,
+                    showMediaPlayer: $showLeftMediaPlayer,
+                    autoPlayNext: $autoPlayNextLeft,
+                    autoPlayOpposite: $autoPlayOppositeLeft,
+                    onSwitchToOpposite: switchLeftToRight,
+                    otherPanePath: rightFileSystem.currentPath
                 )
 
                 Divider()
@@ -98,7 +150,13 @@ struct ContentView: View {
                         focusedPane = .right
                         selectedRightItem = item
                         handleDoubleClick(item: item)
-                    }
+                    },
+                    currentMedia: $rightCurrentMedia,
+                    showMediaPlayer: $showRightMediaPlayer,
+                    autoPlayNext: $autoPlayNextRight,
+                    autoPlayOpposite: $autoPlayOppositeRight,
+                    onSwitchToOpposite: switchRightToLeft,
+                    otherPanePath: leftFileSystem.currentPath
                 )
             }
 
@@ -106,12 +164,6 @@ struct ContentView: View {
 
             // Footer with file operations
             HStack(spacing: 12) {
-                Button("New Folder") {
-                    newFolderName = ""
-                    showNewFolderSheet = true
-                }
-                .buttonStyle(.bordered)
-
                 Button("Delete") {
                     deleteSelectedItem()
                 }
@@ -127,18 +179,6 @@ struct ContentView: View {
             .padding(8)
             .background(Color.secondary.opacity(0.05))
         }
-        .sheet(isPresented: $showNewFolderSheet) {
-            NewFolderSheet(
-                folderName: $newFolderName,
-                onCreate: {
-                    createNewFolder()
-                    showNewFolderSheet = false
-                },
-                onCancel: {
-                    showNewFolderSheet = false
-                }
-            )
-        }
         .sheet(isPresented: $showTextEditor) {
             if let item = previewItem {
                 TextFileEditor(
@@ -146,17 +186,6 @@ struct ContentView: View {
                     fileName: item.name,
                     onClose: {
                         showTextEditor = false
-                    }
-                )
-            }
-        }
-        .sheet(isPresented: $showAudioPlayer) {
-            if let item = previewItem {
-                AudioPlayer(
-                    filePath: item.path,
-                    fileName: item.name,
-                    onClose: {
-                        showAudioPlayer = false
                     }
                 )
             }
@@ -171,16 +200,6 @@ struct ContentView: View {
                     }
                 )
             }
-        }
-    }
-
-    private func createNewFolder() {
-        guard !newFolderName.isEmpty else { return }
-
-        do {
-            try activeFocusedFileSystem.createFolder(name: newFolderName)
-        } catch {
-            print("Error creating folder: \(error.localizedDescription)")
         }
     }
 
@@ -203,48 +222,7 @@ struct ContentView: View {
 }
 
 enum FileType {
-    case folder, text, audio, image, other
-}
-
-struct NewFolderSheet: View {
-    @Binding var folderName: String
-    let onCreate: () -> Void
-    let onCancel: () -> Void
-    @FocusState private var isTextFieldFocused: Bool
-
-    var body: some View {
-        VStack(spacing: 20) {
-            Text("Create New Folder")
-                .font(.headline)
-
-            TextField("Folder name", text: $folderName)
-                .textFieldStyle(.roundedBorder)
-                .focused($isTextFieldFocused)
-                .onSubmit {
-                    if !folderName.isEmpty {
-                        onCreate()
-                    }
-                }
-
-            HStack(spacing: 12) {
-                Button("Cancel") {
-                    onCancel()
-                }
-                .keyboardShortcut(.cancelAction)
-
-                Button("Create") {
-                    onCreate()
-                }
-                .keyboardShortcut(.defaultAction)
-                .disabled(folderName.isEmpty)
-            }
-        }
-        .padding(20)
-        .frame(width: 300)
-        .onAppear {
-            isTextFieldFocused = true
-        }
-    }
+    case folder, text, audio, video, image, other
 }
 
 #Preview {
