@@ -21,7 +21,8 @@ struct FileBrowserPanel: View {
     let onSwitchToOpposite: () -> Void
     let otherPanePath: String
 
-    @State private var selectedItem: FileItem?
+    @State private var selectedItems: Set<FileItem.ID> = []
+    @State private var lastSelectedItem: FileItem?
     @State private var isCreatingNewFolder = false
     @State private var isCreatingNewFile = false
     @State private var newItemName = "untitled"
@@ -138,7 +139,7 @@ struct FileBrowserPanel: View {
                     }
                 }
             } else {
-                List(selection: $selectedItem) {
+                List(selection: $selectedItems) {
                     // Inline new item creation
                     if isCreatingNewFolder || isCreatingNewFile {
                         HStack(spacing: 8) {
@@ -204,26 +205,62 @@ struct FileBrowserPanel: View {
                             }
                         }
                         .tag(item)
-                        .onTapGesture {
-                            // Single tap - select item
-                            selectedItem = item
-                            onFocus()
-                            onItemSelect(item)
-                        }
                         .onTapGesture(count: 2) {
                             // Double tap - open/navigate
                             onItemDoubleClick(item)
                         }
+                        .simultaneousGesture(
+                            TapGesture()
+                                .modifiers(.command)
+                                .onEnded {
+                                    // Command+Click - toggle selection
+                                    if selectedItems.contains(item.id) {
+                                        selectedItems.remove(item.id)
+                                    } else {
+                                        selectedItems.insert(item.id)
+                                        lastSelectedItem = item
+                                    }
+                                    onFocus()
+                                }
+                        )
+                        .simultaneousGesture(
+                            TapGesture()
+                                .modifiers(.shift)
+                                .onEnded {
+                                    // Shift+Click - range selection
+                                    selectRange(to: item)
+                                    onFocus()
+                                }
+                        )
+                        .simultaneousGesture(
+                            TapGesture()
+                                .onEnded {
+                                    // Regular click - replace selection
+                                    selectedItems = [item.id]
+                                    lastSelectedItem = item
+                                    onFocus()
+                                    onItemSelect(item)
+                                }
+                        )
                         .contextMenu {
-                            Button("Rename") {
-                                startRenaming(item: item)
-                            }
-                            Button("Delete") {
-                                deleteItem(item: item)
-                            }
-                            Divider()
-                            Button("Move to Other Pane") {
-                                moveToOtherPane(item: item)
+                            if selectedItems.count > 1 {
+                                Button("Delete \(selectedItems.count) Items") {
+                                    deleteSelectedItems()
+                                }
+                                Button("Move \(selectedItems.count) Items to Other Pane") {
+                                    moveSelectedToOtherPane()
+                                }
+                            } else {
+                                Button("Rename") {
+                                    startRenaming(item: item)
+                                }
+                                Button("Delete") {
+                                    deleteItem(item: item)
+                                }
+                                Divider()
+                                Button("Move to Other Pane") {
+                                    moveToOtherPane(item: item)
+                                }
                             }
                         }
                     .draggable(item.path) {
@@ -257,8 +294,9 @@ struct FileBrowserPanel: View {
                         startCreatingFile()
                     }
                 }
-                .onChange(of: selectedItem) { oldValue, newValue in
-                    if let item = newValue {
+                .onChange(of: selectedItems) { oldValue, newValue in
+                    if let firstID = newValue.first,
+                       let item = fileSystem.files.first(where: { $0.id == firstID }) {
                         onFocus()
                         onItemSelect(item)
                     }
@@ -382,12 +420,34 @@ struct FileBrowserPanel: View {
         renameText = ""
     }
 
+    private func selectRange(to item: FileItem) {
+        guard let lastItem = lastSelectedItem,
+              let startIndex = fileSystem.files.firstIndex(where: { $0.id == lastItem.id }),
+              let endIndex = fileSystem.files.firstIndex(where: { $0.id == item.id }) else {
+            selectedItems = [item.id]
+            lastSelectedItem = item
+            return
+        }
+
+        let range = startIndex < endIndex ? startIndex...endIndex : endIndex...startIndex
+        selectedItems = Set(fileSystem.files[range].map { $0.id })
+        lastSelectedItem = item
+    }
+
     private func deleteItem(item: FileItem) {
         do {
             try fileSystem.deleteItem(at: item.path)
         } catch {
             print("Error deleting item: \(error)")
         }
+    }
+
+    private func deleteSelectedItems() {
+        let itemsToDelete = fileSystem.files.filter { selectedItems.contains($0.id) }
+        for item in itemsToDelete {
+            deleteItem(item: item)
+        }
+        selectedItems.removeAll()
     }
 
     private func moveToOtherPane(item: FileItem) {
@@ -400,6 +460,14 @@ struct FileBrowserPanel: View {
         } catch {
             print("Error moving to other pane: \(error)")
         }
+    }
+
+    private func moveSelectedToOtherPane() {
+        let itemsToMove = fileSystem.files.filter { selectedItems.contains($0.id) }
+        for item in itemsToMove {
+            moveToOtherPane(item: item)
+        }
+        selectedItems.removeAll()
     }
 
     private func mountAndNavigate(_ server: ServerConfig) async {
