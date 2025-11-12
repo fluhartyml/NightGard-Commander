@@ -14,6 +14,7 @@ enum FocusedPane {
 struct ContentView: View {
     @State private var leftFileSystem = FileSystemService()
     @State private var rightFileSystem = FileSystemService()
+    @State private var serverManager = ServerManager()
     @State private var focusedPane: FocusedPane = .left
     @State private var selectedLeftItem: FileItem?
     @State private var selectedRightItem: FileItem?
@@ -118,6 +119,7 @@ struct ContentView: View {
                 // Left pane
                 FileBrowserPanel(
                     fileSystem: leftFileSystem,
+                    serverManager: serverManager,
                     isFocused: focusedPane == .left,
                     onFocus: { focusedPane = .left },
                     onItemSelect: { item in
@@ -141,6 +143,7 @@ struct ContentView: View {
                 // Right pane
                 FileBrowserPanel(
                     fileSystem: rightFileSystem,
+                    serverManager: serverManager,
                     isFocused: focusedPane == .right,
                     onFocus: { focusedPane = .right },
                     onItemSelect: { item in

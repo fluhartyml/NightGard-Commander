@@ -9,6 +9,7 @@ import SwiftUI
 
 struct FileBrowserPanel: View {
     @Bindable var fileSystem: FileSystemService
+    @Bindable var serverManager: ServerManager
     let isFocused: Bool
     let onFocus: () -> Void
     let onItemSelect: (FileItem) -> Void
@@ -26,6 +27,8 @@ struct FileBrowserPanel: View {
     @State private var newItemName = "untitled"
     @State private var renamingItem: FileItem?
     @State private var renameText = ""
+    @State private var showAddServerSheet = false
+    @State private var mountingServer: ServerConfig?
     @FocusState private var isNewItemFocused: Bool
     @FocusState private var isRenameFocused: Bool
 
@@ -35,13 +38,46 @@ struct FileBrowserPanel: View {
             HStack(spacing: 8) {
                 // Drive selector
                 Menu {
-                    ForEach(fileSystem.mountedVolumes) { volume in
+                    Section("Local Drives") {
+                        ForEach(fileSystem.mountedVolumes) { volume in
+                            Button(action: {
+                                fileSystem.navigateToFolder(volume.path)
+                            }) {
+                                HStack {
+                                    Image(systemName: "internaldrive.fill")
+                                    Text(volume.name)
+                                }
+                            }
+                        }
+                    }
+
+                    Section("Servers") {
+                        ForEach(serverManager.servers) { server in
+                            Button(action: {
+                                Task {
+                                    await mountAndNavigate(server)
+                                }
+                            }) {
+                                HStack {
+                                    Image(systemName: "server.rack")
+                                    Text(server.name)
+                                    Spacer()
+                                    if ServerMountService.shared.isServerMounted(server) {
+                                        Image(systemName: "checkmark.circle.fill")
+                                            .foregroundColor(.green)
+                                    }
+                                }
+                            }
+                        }
+
+                        Divider()
+
                         Button(action: {
-                            fileSystem.navigateToFolder(volume.path)
+                            showAddServerSheet = true
                         }) {
                             HStack {
-                                Image(systemName: "externaldrive.fill")
-                                Text(volume.name)
+                                Image(systemName: "plus.circle")
+                                Text("Add Server...")
                             }
                         }
                     }
@@ -168,7 +204,14 @@ struct FileBrowserPanel: View {
                             }
                         }
                         .tag(item)
+                        .onTapGesture {
+                            // Single tap - select item
+                            selectedItem = item
+                            onFocus()
+                            onItemSelect(item)
+                        }
                         .onTapGesture(count: 2) {
+                            // Double tap - open/navigate
                             onItemDoubleClick(item)
                         }
                         .contextMenu {
@@ -267,6 +310,11 @@ struct FileBrowserPanel: View {
         .onAppear {
             fileSystem.loadFiles()
         }
+        .sheet(isPresented: $showAddServerSheet) {
+            ServerConfigSheet(serverManager: serverManager) { server, password in
+                handleAddServer(server, password: password)
+            }
+        }
     }
 
     private func startCreatingFolder() {
@@ -352,5 +400,32 @@ struct FileBrowserPanel: View {
         } catch {
             print("Error moving to other pane: \(error)")
         }
+    }
+
+    private func mountAndNavigate(_ server: ServerConfig) async {
+        mountingServer = server
+
+        do {
+            let mountPath = try await ServerMountService.shared.mountServer(server)
+            fileSystem.navigateToFolder(mountPath)
+            mountingServer = nil
+        } catch {
+            print("Error mounting server: \(error.localizedDescription)")
+            mountingServer = nil
+        }
+    }
+
+    private func handleAddServer(_ server: ServerConfig, password: String) {
+        print("🔑 [FileBrowser] handleAddServer() called")
+        print("🔑 [FileBrowser] Server: \(server.name)")
+
+        // Save password to Keychain
+        let saved = KeychainService.shared.savePassword(password, for: server.id)
+        print("🔑 [FileBrowser] Keychain save result: \(saved)")
+
+        // Add server to manager
+        print("🔑 [FileBrowser] Adding server to manager")
+        serverManager.addServer(server)
+        print("🔑 [FileBrowser] Server count: \(serverManager.servers.count)")
     }
 }
