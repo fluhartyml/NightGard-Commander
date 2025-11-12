@@ -13,6 +13,7 @@ class FileSystemService {
     var files: [FileItem] = []
     var errorMessage: String?
     var mountedVolumes: [VolumeItem] = []
+    var lastVisitedFolder: String? = nil // Track folder we came from for scroll restoration
 
     private let fileManager = FileManager.default
 
@@ -89,14 +90,19 @@ class FileSystemService {
     }
 
     func navigateToFolder(_ path: String) {
+        // Remember current folder name before navigating
+        lastVisitedFolder = URL(fileURLWithPath: currentPath).lastPathComponent
         currentPath = path
         loadFiles()
     }
 
     func navigateUp() {
         let url = URL(fileURLWithPath: currentPath)
+        // Remember which folder we're leaving
+        lastVisitedFolder = url.lastPathComponent
         let parentURL = url.deletingLastPathComponent()
-        navigateToFolder(parentURL.path)
+        currentPath = parentURL.path
+        loadFiles()
     }
 
     func createFolder(name: String) throws {

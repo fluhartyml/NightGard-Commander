@@ -14,14 +14,15 @@ struct FileBrowserPanel: View {
     let onFocus: () -> Void
     let onItemSelect: (FileItem) -> Void
     let onItemDoubleClick: (FileItem) -> Void
+    let onAddToPlaylist: ((FileItem) -> Void)?
     @Binding var currentMedia: FileItem?
     @Binding var showMediaPlayer: Bool
     @Binding var autoPlayNext: Bool
     @Binding var autoPlayOpposite: Bool
     let onSwitchToOpposite: () -> Void
     let otherPanePath: String
+    @Binding var selectedItems: Set<FileItem.ID>
 
-    @State private var selectedItems: Set<FileItem.ID> = []
     @State private var lastSelectedItem: FileItem?
     @State private var isCreatingNewFolder = false
     @State private var isCreatingNewFile = false
@@ -204,12 +205,12 @@ struct FileBrowserPanel: View {
                                     .frame(width: 120, alignment: .trailing)
                             }
                         }
-                        .tag(item)
+                        .tag(item.id)
                         .onTapGesture(count: 2) {
                             // Double tap - open/navigate
                             onItemDoubleClick(item)
                         }
-                        .simultaneousGesture(
+                        .gesture(
                             TapGesture()
                                 .modifiers(.command)
                                 .onEnded {
@@ -223,23 +224,13 @@ struct FileBrowserPanel: View {
                                     onFocus()
                                 }
                         )
-                        .simultaneousGesture(
+                        .gesture(
                             TapGesture()
                                 .modifiers(.shift)
                                 .onEnded {
                                     // Shift+Click - range selection
                                     selectRange(to: item)
                                     onFocus()
-                                }
-                        )
-                        .simultaneousGesture(
-                            TapGesture()
-                                .onEnded {
-                                    // Regular click - replace selection
-                                    selectedItems = [item.id]
-                                    lastSelectedItem = item
-                                    onFocus()
-                                    onItemSelect(item)
                                 }
                         )
                         .contextMenu {
@@ -261,12 +252,20 @@ struct FileBrowserPanel: View {
                                 Button("Move to Other Pane") {
                                     moveToOtherPane(item: item)
                                 }
+
+                                // Add to playlist for media files
+                                if isMediaFile(item), let addAction = onAddToPlaylist {
+                                    Divider()
+                                    Button("Add to Playlist") {
+                                        addAction(item)
+                                    }
+                                }
                             }
                         }
-                    .draggable(item.path) {
-                        Label(item.name, systemImage: item.isDirectory ? "folder.fill" : "doc.fill")
-                    }
-                    .dropDestination(for: String.self) { droppedPaths, location in
+                        .onDrag {
+                            NSItemProvider(object: item.path as NSString)
+                        }
+                        .dropDestination(for: String.self) { droppedPaths, location in
                         // Only allow drop if this is a directory
                         guard item.isDirectory else { return false }
 
@@ -275,9 +274,10 @@ struct FileBrowserPanel: View {
                                 let sourceURL = URL(fileURLWithPath: sourcePath)
                                 let fileName = sourceURL.lastPathComponent
                                 let destURL = URL(fileURLWithPath: item.path).appendingPathComponent(fileName)
-                                try FileManager.default.moveItem(at: sourceURL, to: destURL)
+                                // Always copy on drag (use Move button ⌘6 for actual moves)
+                                try FileManager.default.copyItem(at: sourceURL, to: destURL)
                             } catch {
-                                print("Error moving file: \(error)")
+                                print("Error copying file: \(error)")
                             }
                         }
                         fileSystem.loadFiles()
@@ -286,6 +286,21 @@ struct FileBrowserPanel: View {
                     }
                 }
                 .listStyle(.plain)
+                .dropDestination(for: String.self) { droppedPaths, location in
+                    // Drop onto pane copies to current directory (use Move ⌘6 for actual moves)
+                    for sourcePath in droppedPaths {
+                        do {
+                            let sourceURL = URL(fileURLWithPath: sourcePath)
+                            let fileName = sourceURL.lastPathComponent
+                            let destURL = URL(fileURLWithPath: fileSystem.currentPath).appendingPathComponent(fileName)
+                            try FileManager.default.copyItem(at: sourceURL, to: destURL)
+                        } catch {
+                            print("Error copying file: \(error)")
+                        }
+                    }
+                    fileSystem.loadFiles()
+                    return true
+                }
                 .contextMenu {
                     Button("New Folder") {
                         startCreatingFolder()
@@ -297,8 +312,18 @@ struct FileBrowserPanel: View {
                 .onChange(of: selectedItems) { oldValue, newValue in
                     if let firstID = newValue.first,
                        let item = fileSystem.files.first(where: { $0.id == firstID }) {
+                        lastSelectedItem = item
                         onFocus()
                         onItemSelect(item)
+                    }
+                }
+                .onChange(of: fileSystem.files) { oldValue, newValue in
+                    // Restore selection to the folder we came from
+                    if let lastFolder = fileSystem.lastVisitedFolder,
+                       let item = newValue.first(where: { $0.name == lastFolder }) {
+                        selectedItems = [item.id]
+                        lastSelectedItem = item
+                        fileSystem.lastVisitedFolder = nil // Clear after use
                     }
                 }
             }
@@ -495,5 +520,11 @@ struct FileBrowserPanel: View {
         print("🔑 [FileBrowser] Adding server to manager")
         serverManager.addServer(server)
         print("🔑 [FileBrowser] Server count: \(serverManager.servers.count)")
+    }
+
+    private func isMediaFile(_ item: FileItem) -> Bool {
+        guard !item.isDirectory else { return false }
+        let ext = (item.name as NSString).pathExtension.lowercased()
+        return ["mp3", "m4a", "wav", "aiff", "aac", "flac", "ogg", "mp4", "mov", "m4v", "avi", "mkv"].contains(ext)
     }
 }

@@ -134,17 +134,25 @@ struct InPaneMediaPlayer: View {
                 .padding(.horizontal, 8)
                 .padding(.bottom, 4)
 
-                // Next up
-                if let next = nextMedia {
-                    Text("Next: \(next.name)")
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-                        .lineLimit(1)
-                        .padding(.horizontal, 8)
-                        .padding(.bottom, 4)
+                // Next up (always reserve space for consistent height)
+                Group {
+                    if let next = nextMedia {
+                        Text("Next: \(next.name)")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
+                    } else {
+                        Text(" ")
+                            .font(.caption2)
+                    }
                 }
+                .padding(.horizontal, 8)
+                .padding(.bottom, 4)
             }
             .background(Color.secondary.opacity(0.05))
+            .onAppear {
+                setupPlayer()
+            }
             .onChange(of: currentMedia) {
                 setupPlayer()
             }
