@@ -235,7 +235,20 @@ struct FileBrowserPanel: View {
                                 }
                         )
                         .contextMenu {
+                            let isCommandPressed = NSEvent.modifierFlags.contains(.command)
+
                             if selectedItems.count > 1 {
+                                Button(isCommandPressed ? "Cut \(selectedItems.count) Items" : "Copy \(selectedItems.count) Items") {
+                                    if isCommandPressed {
+                                        cutSelectedItems()
+                                    } else {
+                                        copySelectedItems()
+                                    }
+                                }
+                                .keyboardShortcut(isCommandPressed ? "x" : "c", modifiers: .command)
+
+                                Divider()
+
                                 Button("Delete \(selectedItems.count) Items") {
                                     deleteSelectedItems()
                                 }
@@ -243,6 +256,17 @@ struct FileBrowserPanel: View {
                                     moveSelectedToOtherPane()
                                 }
                             } else {
+                                Button(isCommandPressed ? "Cut" : "Copy") {
+                                    if isCommandPressed {
+                                        cutItem(item: item)
+                                    } else {
+                                        copyItem(item: item)
+                                    }
+                                }
+                                .keyboardShortcut(isCommandPressed ? "x" : "c", modifiers: .command)
+
+                                Divider()
+
                                 Button("Rename") {
                                     startRenaming(item: item)
                                 }
@@ -264,7 +288,24 @@ struct FileBrowserPanel: View {
                             }
                         }
                         .onDrag {
-                            NSItemProvider(object: item.path as NSString)
+                            let fileURL = URL(fileURLWithPath: item.path)
+                            let provider = NSItemProvider()
+
+                            // Register file URL for external drops (Desktop, Finder, folders)
+                            provider.registerFileRepresentation(forTypeIdentifier: "public.file-url",
+                                                                fileOptions: [.openInPlace]) { completion in
+                                completion(fileURL, true, nil)
+                                return nil
+                            }
+
+                            // Also register as NSURL for compatibility
+                            provider.registerObject(fileURL as NSURL, visibility: .all)
+
+                            // Register string path for internal drops
+                            provider.registerObject(item.path as NSString, visibility: .all)
+                            provider.suggestedName = item.name
+
+                            return provider
                         }
                         .dropDestination(for: String.self) { droppedPaths, location in
                         // Only allow drop if this is a directory
@@ -467,7 +508,7 @@ struct FileBrowserPanel: View {
 
         // Audio files
         if ["mp3", "m4a", "wav", "aiff", "aac", "flac", "ogg"].contains(ext) {
-            return ("music.note", .pink)
+            return ("music.note", Color(red: 0.85, green: 0.75, blue: 0.20))
         }
         // Video files
         else if ["mp4", "mov", "m4v", "avi", "mkv"].contains(ext) {
@@ -475,7 +516,7 @@ struct FileBrowserPanel: View {
         }
         // Image files
         else if ["png", "jpg", "jpeg", "gif", "bmp", "tiff", "heic", "webp"].contains(ext) {
-            return ("photo.fill", .orange)
+            return ("photo.fill", .blue)
         }
         // Text files
         else if ["txt", "md", "rb", "json", "swift", "log", "xml", "yaml", "yml"].contains(ext) {
@@ -557,6 +598,35 @@ struct FileBrowserPanel: View {
             moveToOtherPane(item: item)
         }
         selectedItems.removeAll()
+    }
+
+    private func copyItem(item: FileItem) {
+        do {
+            let sourceURL = URL(fileURLWithPath: item.path)
+            let fileName = sourceURL.lastPathComponent
+            let destURL = URL(fileURLWithPath: otherPanePath).appendingPathComponent(fileName)
+            try FileManager.default.copyItem(at: sourceURL, to: destURL)
+            fileSystem.loadFiles()
+        } catch {
+            print("Error copying to other pane: \(error)")
+        }
+    }
+
+    private func copySelectedItems() {
+        let itemsToCopy = fileSystem.files.filter { selectedItems.contains($0.id) }
+        for item in itemsToCopy {
+            copyItem(item: item)
+        }
+    }
+
+    private func cutItem(item: FileItem) {
+        // Cut is the same as move
+        moveToOtherPane(item: item)
+    }
+
+    private func cutSelectedItems() {
+        // Cut is the same as move
+        moveSelectedToOtherPane()
     }
 
     private func mountAndNavigate(_ server: ServerConfig) async {

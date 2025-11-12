@@ -332,11 +332,17 @@ struct ContentView: View {
         // Standard Mac keyboard shortcuts (invisible buttons)
         .background(
             Group {
-                Button("Copy") { copyToOtherPane() }
+                Button("Copy to Clipboard") { copyToClipboard() }
                     .keyboardShortcut("c", modifiers: .command)
                     .hidden()
-                Button("Move") { moveToOtherPane() }
+                Button("Cut to Clipboard") { cutToClipboard() }
                     .keyboardShortcut("x", modifiers: .command)
+                    .hidden()
+                Button("Paste from Clipboard") { pasteFromClipboard() }
+                    .keyboardShortcut("v", modifiers: .command)
+                    .hidden()
+                Button("Select All") { selectAll() }
+                    .keyboardShortcut("a", modifiers: .command)
                     .hidden()
                 Button("Delete") { deleteSelectedItem() }
                     .keyboardShortcut(.delete, modifiers: .command)
@@ -503,11 +509,193 @@ struct ContentView: View {
         // This will be handled by FileBrowserPanel's rename functionality
         print("Rename - handled by panel context menu")
     }
+
+    // MARK: - Clipboard Operations
+
+    private func copyToClipboard() {
+        let selectedIDs = focusedPane == .left ? selectedLeftItems : selectedRightItems
+        let selectedFiles = activeFocusedFileSystem.files.filter { selectedIDs.contains($0.id) }
+        guard !selectedFiles.isEmpty else { return }
+
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+
+        let fileURLs = selectedFiles.map { URL(fileURLWithPath: $0.path) }
+        pasteboard.writeObjects(fileURLs as [NSURL])
+    }
+
+    private func cutToClipboard() {
+        let selectedIDs = focusedPane == .left ? selectedLeftItems : selectedRightItems
+        let selectedFiles = activeFocusedFileSystem.files.filter { selectedIDs.contains($0.id) }
+        guard !selectedFiles.isEmpty else { return }
+
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+
+        let fileURLs = selectedFiles.map { URL(fileURLWithPath: $0.path) }
+        pasteboard.writeObjects(fileURLs as [NSURL])
+
+        // Also set the promised file type for cut operation
+        pasteboard.setPropertyList([1], forType: .movePromiseType)
+    }
+
+    private func pasteFromClipboard() {
+        let pasteboard = NSPasteboard.general
+        let destinationPath = activeFocusedFileSystem.currentPath
+
+        // Try to paste files first
+        if let fileURLs = pasteboard.readObjects(forClasses: [NSURL.self]) as? [URL], !fileURLs.isEmpty {
+            let isCutOperation = pasteboard.propertyList(forType: .movePromiseType) != nil
+
+            for sourceURL in fileURLs {
+                do {
+                    let fileName = sourceURL.lastPathComponent
+                    let destURL = URL(fileURLWithPath: destinationPath).appendingPathComponent(fileName)
+
+                    if isCutOperation {
+                        try FileManager.default.moveItem(at: sourceURL, to: destURL)
+                    } else {
+                        try FileManager.default.copyItem(at: sourceURL, to: destURL)
+                    }
+                } catch {
+                    print("Error pasting file: \(error.localizedDescription)")
+                }
+            }
+
+            if isCutOperation {
+                pasteboard.clearContents()
+            }
+
+            leftFileSystem.loadFiles()
+            rightFileSystem.loadFiles()
+            return
+        }
+
+        // Try to paste image
+        if let imageData = pasteboard.data(forType: .png) ?? pasteboard.data(forType: .tiff) {
+            let fileName = getUniqueFileName(base: "Clipboard", ext: "png", in: destinationPath)
+            let destURL = URL(fileURLWithPath: destinationPath).appendingPathComponent(fileName)
+            do {
+                try imageData.write(to: destURL)
+                leftFileSystem.loadFiles()
+                rightFileSystem.loadFiles()
+                return
+            } catch {
+                print("Error pasting image: \(error.localizedDescription)")
+            }
+        }
+
+        // Try to paste text content
+        if let text = pasteboard.string(forType: .string), !text.isEmpty {
+            let (fileName, content) = smartDetectTextContent(text)
+            let uniqueFileName = getUniqueFileName(base: (fileName as NSString).deletingPathExtension,
+                                                   ext: (fileName as NSString).pathExtension,
+                                                   in: destinationPath)
+            let destURL = URL(fileURLWithPath: destinationPath).appendingPathComponent(uniqueFileName)
+
+            do {
+                try content.write(to: destURL, atomically: true, encoding: .utf8)
+                leftFileSystem.loadFiles()
+                rightFileSystem.loadFiles()
+            } catch {
+                print("Error creating file from text: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    private func smartDetectTextContent(_ text: String) -> (fileName: String, content: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // Detect URL
+        if trimmed.starts(with: "http://") || trimmed.starts(with: "https://"),
+           let url = URL(string: trimmed) {
+            // Create macOS web location file
+            let weblocContent = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+            <plist version="1.0">
+            <dict>
+                <key>URL</key>
+                <string>\(url.absoluteString)</string>
+            </dict>
+            </plist>
+            """
+            let host = url.host ?? "link"
+            return ("\(host).webloc", weblocContent)
+        }
+
+        // Detect JSON
+        if (trimmed.starts(with: "{") && trimmed.hasSuffix("}")) ||
+           (trimmed.starts(with: "[") && trimmed.hasSuffix("]")) {
+            if let _ = try? JSONSerialization.jsonObject(with: Data(trimmed.utf8)) {
+                return ("Clipboard.json", text)
+            }
+        }
+
+        // Detect code by keywords
+        if trimmed.contains("func ") || trimmed.contains("class ") || trimmed.contains("struct ") ||
+           trimmed.contains("import Swift") || trimmed.contains("@") {
+            return ("Clipboard.swift", text)
+        }
+        if trimmed.contains("def ") || trimmed.contains("import ") || trimmed.contains("print(") {
+            return ("Clipboard.py", text)
+        }
+        if trimmed.contains("function ") || trimmed.contains("const ") || trimmed.contains("let ") ||
+           trimmed.contains("var ") && (trimmed.contains("=>") || trimmed.contains("console.log")) {
+            return ("Clipboard.js", text)
+        }
+        if trimmed.contains("<?php") {
+            return ("Clipboard.php", text)
+        }
+        if trimmed.contains("#include") || trimmed.contains("int main(") {
+            return ("Clipboard.c", text)
+        }
+        if trimmed.contains("<!DOCTYPE html>") || trimmed.contains("<html") {
+            return ("Clipboard.html", text)
+        }
+        if trimmed.contains("<svg") || trimmed.contains("<?xml") {
+            return ("Clipboard.xml", text)
+        }
+
+        // Detect Markdown
+        if trimmed.contains("# ") || trimmed.contains("## ") || trimmed.contains("```") {
+            return ("Clipboard.md", text)
+        }
+
+        // Default to plain text
+        return ("Clipboard.txt", text)
+    }
+
+    private func getUniqueFileName(base: String, ext: String, in directory: String) -> String {
+        var fileName = "\(base).\(ext)"
+        var counter = 2
+        let fileManager = FileManager.default
+
+        while fileManager.fileExists(atPath: URL(fileURLWithPath: directory).appendingPathComponent(fileName).path) {
+            fileName = "\(base) \(counter).\(ext)"
+            counter += 1
+        }
+
+        return fileName
+    }
+
+    private func selectAll() {
+        let allIDs = Set(activeFocusedFileSystem.files.map { $0.id })
+        if focusedPane == .left {
+            selectedLeftItems = allIDs
+        } else {
+            selectedRightItems = allIDs
+        }
+    }
 }
 
 
 enum FileType {
     case folder, text, audio, video, image, other
+}
+
+extension NSPasteboard.PasteboardType {
+    static let movePromiseType = NSPasteboard.PasteboardType("com.nightgard.move-promise")
 }
 
 #Preview {
