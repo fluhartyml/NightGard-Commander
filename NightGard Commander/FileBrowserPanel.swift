@@ -167,9 +167,10 @@ struct FileBrowserPanel: View {
 
                     // Regular file list
                     ForEach(fileSystem.files) { item in
+                        let icon = iconForFile(item)
                         HStack(spacing: 8) {
-                            Image(systemName: item.isDirectory ? "folder.fill" : "doc.fill")
-                                .foregroundColor(item.isDirectory ? .blue : .secondary)
+                            Image(systemName: icon.name)
+                                .foregroundColor(icon.color)
                                 .frame(width: 20)
 
                             if renamingItem?.id == item.id {
@@ -269,37 +270,71 @@ struct FileBrowserPanel: View {
                         // Only allow drop if this is a directory
                         guard item.isDirectory else { return false }
 
+                        var successfulCopies = false
                         for sourcePath in droppedPaths {
+                            let sourceURL = URL(fileURLWithPath: sourcePath)
+                            let fileName = sourceURL.lastPathComponent
+                            let destURL = URL(fileURLWithPath: item.path).appendingPathComponent(fileName)
+
+                            // Don't allow copying to same location
+                            guard sourceURL != destURL else {
+                                print("Skipping - source and destination are the same")
+                                continue
+                            }
+
                             do {
-                                let sourceURL = URL(fileURLWithPath: sourcePath)
-                                let fileName = sourceURL.lastPathComponent
-                                let destURL = URL(fileURLWithPath: item.path).appendingPathComponent(fileName)
+                                // Check if destination exists
+                                if FileManager.default.fileExists(atPath: destURL.path) {
+                                    print("File already exists at destination: \(destURL.path)")
+                                    continue
+                                }
                                 // Always copy on drag (use Move button ⌘6 for actual moves)
                                 try FileManager.default.copyItem(at: sourceURL, to: destURL)
+                                successfulCopies = true
                             } catch {
-                                print("Error copying file: \(error)")
+                                print("Error copying file: \(error.localizedDescription)")
                             }
                         }
-                        fileSystem.loadFiles()
-                        return true
+
+                        if successfulCopies {
+                            fileSystem.loadFiles()
+                        }
+                        return successfulCopies
                     }
                     }
                 }
                 .listStyle(.plain)
                 .dropDestination(for: String.self) { droppedPaths, location in
                     // Drop onto pane copies to current directory (use Move ⌘6 for actual moves)
+                    var successfulCopies = false
                     for sourcePath in droppedPaths {
+                        let sourceURL = URL(fileURLWithPath: sourcePath)
+                        let fileName = sourceURL.lastPathComponent
+                        let destURL = URL(fileURLWithPath: fileSystem.currentPath).appendingPathComponent(fileName)
+
+                        // Don't allow copying to same location
+                        guard sourceURL != destURL else {
+                            print("Skipping - source and destination are the same")
+                            continue
+                        }
+
                         do {
-                            let sourceURL = URL(fileURLWithPath: sourcePath)
-                            let fileName = sourceURL.lastPathComponent
-                            let destURL = URL(fileURLWithPath: fileSystem.currentPath).appendingPathComponent(fileName)
+                            // Check if destination exists
+                            if FileManager.default.fileExists(atPath: destURL.path) {
+                                print("File already exists at destination: \(destURL.path)")
+                                continue
+                            }
                             try FileManager.default.copyItem(at: sourceURL, to: destURL)
+                            successfulCopies = true
                         } catch {
-                            print("Error copying file: \(error)")
+                            print("Error copying file: \(error.localizedDescription)")
                         }
                     }
-                    fileSystem.loadFiles()
-                    return true
+
+                    if successfulCopies {
+                        fileSystem.loadFiles()
+                    }
+                    return successfulCopies
                 }
                 .contextMenu {
                     Button("New Folder") {
@@ -421,6 +456,35 @@ struct FileBrowserPanel: View {
     private func startRenaming(item: FileItem) {
         renamingItem = item
         renameText = item.name
+    }
+
+    private func iconForFile(_ item: FileItem) -> (name: String, color: Color) {
+        if item.isDirectory {
+            return ("folder.fill", .blue)
+        }
+
+        let ext = (item.name as NSString).pathExtension.lowercased()
+
+        // Audio files
+        if ["mp3", "m4a", "wav", "aiff", "aac", "flac", "ogg"].contains(ext) {
+            return ("music.note", .pink)
+        }
+        // Video files
+        else if ["mp4", "mov", "m4v", "avi", "mkv"].contains(ext) {
+            return ("video.fill", .purple)
+        }
+        // Image files
+        else if ["png", "jpg", "jpeg", "gif", "bmp", "tiff", "heic", "webp"].contains(ext) {
+            return ("photo.fill", .orange)
+        }
+        // Text files
+        else if ["txt", "md", "rb", "json", "swift", "log", "xml", "yaml", "yml"].contains(ext) {
+            return ("doc.text.fill", .secondary)
+        }
+        // Generic file
+        else {
+            return ("doc.fill", .secondary)
+        }
     }
 
     private func commitRename(item: FileItem) {

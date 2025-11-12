@@ -115,7 +115,7 @@ struct MetadataEditor: View {
 
     private func loadMetadata() {
         let url = URL(fileURLWithPath: filePath)
-        let asset = AVAsset(url: url)
+        let asset = AVURLAsset(url: url)
 
         Task {
             do {
@@ -194,7 +194,7 @@ struct MetadataEditor: View {
 
         let result = await Task.detached {
             let url = URL(fileURLWithPath: filePath)
-            let asset = AVAsset(url: url)
+            let asset = AVURLAsset(url: url)
 
             do {
                 // Create new metadata items
@@ -222,25 +222,21 @@ struct MetadataEditor: View {
                     .appendingPathComponent(UUID().uuidString)
                     .appendingPathExtension(url.pathExtension)
 
-                // Export with new metadata
+                // Export with new metadata using modern API
                 guard let exportSession = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetPassthrough) else {
                     throw NSError(domain: "MetadataEditor", code: 1, userInfo: [NSLocalizedDescriptionKey: "Could not create export session"])
                 }
 
-                exportSession.outputURL = tempURL
                 exportSession.outputFileType = .mp3
                 exportSession.metadata = newMetadata
 
-                await exportSession.export()
+                // Use modern async export API
+                try await exportSession.export(to: tempURL, as: .mp3)
 
-                if exportSession.status == .completed {
-                    // Replace original file with updated one
-                    try FileManager.default.removeItem(at: url)
-                    try FileManager.default.moveItem(at: tempURL, to: url)
-                    return Result<Void, Error>.success(())
-                } else {
-                    throw NSError(domain: "MetadataEditor", code: 2, userInfo: [NSLocalizedDescriptionKey: exportSession.error?.localizedDescription ?? "Export failed"])
-                }
+                // Replace original file with updated one
+                try FileManager.default.removeItem(at: url)
+                try FileManager.default.moveItem(at: tempURL, to: url)
+                return Result<Void, Error>.success(())
             } catch {
                 return Result<Void, Error>.failure(error)
             }
