@@ -14,6 +14,7 @@ class MediaScanner {
     var foundFiles: [URL] = []
     var currentPath: String = ""
     var isCancelled = false
+    var totalSize: Int64 = 0
 
     // Media file extensions
     private let audioExtensions = ["mp3", "m4a", "wav", "aiff", "aac", "flac", "ogg"]
@@ -27,6 +28,7 @@ class MediaScanner {
     func scanFolder(at url: URL) async -> [URL] {
         isScanning = true
         foundFiles = []
+        totalSize = 0
         currentPath = url.path
         isCancelled = false
 
@@ -56,8 +58,12 @@ class MediaScanner {
             // Check if it's a media file
             let ext = fileURL.pathExtension.lowercased()
             if allMediaExtensions.contains(ext) {
+                // Get file size
+                let fileSize = (try? fileURL.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
+
                 await MainActor.run {
                     foundFiles.append(fileURL)
+                    totalSize += Int64(fileSize)
                 }
             }
         }
@@ -76,6 +82,23 @@ class MediaScanner {
             return .video
         }
         return .other
+    }
+
+    // Check available disk space at path
+    func availableSpace(at path: String) -> Int64? {
+        let fileManager = FileManager.default
+        guard let attributes = try? fileManager.attributesOfFileSystem(forPath: path) else {
+            return nil
+        }
+        return attributes[.systemFreeSize] as? Int64
+    }
+
+    // Format bytes to human-readable string
+    func formatBytes(_ bytes: Int64) -> String {
+        let formatter = ByteCountFormatter()
+        formatter.countStyle = .file
+        formatter.allowedUnits = [.useGB, .useMB, .useKB]
+        return formatter.string(fromByteCount: bytes)
     }
 
     enum MediaType: String {

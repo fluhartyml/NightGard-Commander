@@ -20,6 +20,8 @@ struct ScanForMediaDialog: View {
     @State private var processedCount = 0
     @State private var totalCount = 0
     @State private var isProcessing = false
+    @State private var errorMessage: String?
+    @State private var showErrorAlert = false
 
     enum ScanPhase {
         case scanning
@@ -92,6 +94,13 @@ struct ScanForMediaDialog: View {
         .task {
             await startScanning()
         }
+        .alert("Error", isPresented: $showErrorAlert) {
+            Button("OK") {
+                showErrorAlert = false
+            }
+        } message: {
+            Text(errorMessage ?? "An unknown error occurred")
+        }
     }
 
     // MARK: - Scanning View
@@ -120,6 +129,39 @@ struct ScanForMediaDialog: View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Found \(scanner.foundFiles.count) media files")
                 .font(.headline)
+
+            // Size and space info
+            HStack {
+                Text("Total size: \(scanner.formatBytes(scanner.totalSize))")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+
+                if selectedAction != .addToPlaylist, let available = scanner.availableSpace(at: destinationPath) {
+                    Spacer()
+                    let hasSpace = available > scanner.totalSize
+                    HStack(spacing: 4) {
+                        Image(systemName: hasSpace ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                            .foregroundColor(hasSpace ? .green : .orange)
+                        Text("Available: \(scanner.formatBytes(available))")
+                            .font(.subheadline)
+                            .foregroundColor(hasSpace ? .secondary : .orange)
+                    }
+                }
+            }
+
+            // Space warning
+            if selectedAction != .addToPlaylist, let available = scanner.availableSpace(at: destinationPath), available < scanner.totalSize {
+                HStack(spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundColor(.orange)
+                    Text("Warning: Insufficient disk space. Some files may not copy.")
+                        .font(.caption)
+                        .foregroundColor(.orange)
+                }
+                .padding(8)
+                .background(Color.orange.opacity(0.1))
+                .cornerRadius(4)
+            }
 
             // File list
             ScrollView {
@@ -302,7 +344,25 @@ struct ScanForMediaDialog: View {
                     processedCount += 1
                 }
             } catch {
-                print("Error processing file \(sourceURL.lastPathComponent): \(error)")
+                // Check for disk space error
+                let nsError = error as NSError
+                let isDiskFull = nsError.code == NSFileWriteOutOfSpaceError ||
+                                 nsError.domain == NSCocoaErrorDomain && nsError.code == 640
+
+                await MainActor.run {
+                    if isDiskFull {
+                        errorMessage = "Disk full: Could not copy \(sourceURL.lastPathComponent). \(processedCount) of \(totalCount) files copied."
+                        showErrorAlert = true
+                        scanner.cancel()
+                    } else {
+                        // Log other errors but continue
+                        print("Error processing file \(sourceURL.lastPathComponent): \(error)")
+                    }
+                }
+
+                if isDiskFull {
+                    break
+                }
             }
         }
     }
