@@ -229,8 +229,28 @@ struct MetadataEditor: View {
 
                 exportSession.metadata = newMetadata
 
+                // Determine output file type based on file extension
+                let fileExtension = url.pathExtension.lowercased()
+                let outputFileType: AVFileType
+                switch fileExtension {
+                case "mp3":
+                    outputFileType = .mp3
+                case "m4a", "m4b":
+                    outputFileType = .m4a
+                case "mp4", "m4v":
+                    outputFileType = .mp4
+                case "mov":
+                    outputFileType = .mov
+                case "wav":
+                    outputFileType = .wav
+                case "aiff", "aif":
+                    outputFileType = .aiff
+                default:
+                    outputFileType = .mp4 // Safe fallback
+                }
+
                 // Use modern macOS 26 export API
-                try await exportSession.export(to: tempURL, as: .mp3)
+                try await exportSession.export(to: tempURL, as: outputFileType)
 
                 // Replace original file with updated one
                 try FileManager.default.removeItem(at: url)
