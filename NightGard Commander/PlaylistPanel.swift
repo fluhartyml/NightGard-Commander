@@ -119,17 +119,22 @@ struct PlaylistPanel: View {
                     }
                     return true
                 }
-                .dropDestination(for: URL.self) { droppedURLs, location in
+                .onDrop(of: [.fileURL], isTargeted: nil) { providers in
                     // Accept file drops from desktop/Finder - add to playlist
-                    for url in droppedURLs {
-                        let fileItem = FileItem(
-                            name: url.lastPathComponent,
-                            path: url.path,
-                            isDirectory: false,
-                            size: 0,
-                            modificationDate: Date()
-                        )
-                        playlistManager.addItem(fileItem)
+                    for provider in providers {
+                        _ = provider.loadObject(ofClass: URL.self) { url, error in
+                            guard let sourceURL = url, error == nil else { return }
+                            DispatchQueue.main.async {
+                                let fileItem = FileItem(
+                                    name: sourceURL.lastPathComponent,
+                                    path: sourceURL.path,
+                                    isDirectory: false,
+                                    size: 0,
+                                    modificationDate: Date()
+                                )
+                                playlistManager.addItem(fileItem)
+                            }
+                        }
                     }
                     return true
                 }

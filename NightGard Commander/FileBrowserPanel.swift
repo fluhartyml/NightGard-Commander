@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct FileBrowserPanel: View {
     @Bindable var fileSystem: FileSystemService
@@ -211,6 +212,14 @@ struct FileBrowserPanel: View {
                             // Double tap - open/navigate
                             onItemDoubleClick(item)
                         }
+                        .onTapGesture(count: 1) {
+                            // Single tap - select item
+                            selectedItems.removeAll()
+                            selectedItems.insert(item.id)
+                            lastSelectedItem = item
+                            onItemSelect(item)
+                            onFocus()
+                        }
                         .gesture(
                             TapGesture()
                                 .modifiers(.command)
@@ -288,20 +297,25 @@ struct FileBrowserPanel: View {
                         fileSystem.loadFiles()
                         return true
                     }
-                        .dropDestination(for: URL.self) { droppedURLs, location in
+                        .onDrop(of: [.fileURL], isTargeted: nil) { providers in
                         // Accept file drops from desktop/Finder onto folders
                         guard item.isDirectory else { return false }
 
-                        for sourceURL in droppedURLs {
-                            do {
-                                let fileName = sourceURL.lastPathComponent
-                                let destURL = URL(fileURLWithPath: item.path).appendingPathComponent(fileName)
-                                try FileManager.default.copyItem(at: sourceURL, to: destURL)
-                            } catch {
-                                print("Error copying file from external source: \(error)")
+                        for provider in providers {
+                            _ = provider.loadObject(ofClass: URL.self) { url, error in
+                                guard let sourceURL = url, error == nil else { return }
+                                DispatchQueue.main.async {
+                                    do {
+                                        let fileName = sourceURL.lastPathComponent
+                                        let destURL = URL(fileURLWithPath: item.path).appendingPathComponent(fileName)
+                                        try FileManager.default.copyItem(at: sourceURL, to: destURL)
+                                        fileSystem.loadFiles()
+                                    } catch {
+                                        print("Error copying file from external source: \(error)")
+                                    }
+                                }
                             }
                         }
-                        fileSystem.loadFiles()
                         return true
                     }
                     }
@@ -322,18 +336,23 @@ struct FileBrowserPanel: View {
                     fileSystem.loadFiles()
                     return true
                 }
-                .dropDestination(for: URL.self) { droppedURLs, location in
+                .onDrop(of: [.fileURL], isTargeted: nil) { providers in
                     // Accept file drops from desktop/Finder - copy to current directory
-                    for sourceURL in droppedURLs {
-                        do {
-                            let fileName = sourceURL.lastPathComponent
-                            let destURL = URL(fileURLWithPath: fileSystem.currentPath).appendingPathComponent(fileName)
-                            try FileManager.default.copyItem(at: sourceURL, to: destURL)
-                        } catch {
-                            print("Error copying file from external source: \(error)")
+                    for provider in providers {
+                        _ = provider.loadObject(ofClass: URL.self) { url, error in
+                            guard let sourceURL = url, error == nil else { return }
+                            DispatchQueue.main.async {
+                                do {
+                                    let fileName = sourceURL.lastPathComponent
+                                    let destURL = URL(fileURLWithPath: fileSystem.currentPath).appendingPathComponent(fileName)
+                                    try FileManager.default.copyItem(at: sourceURL, to: destURL)
+                                    fileSystem.loadFiles()
+                                } catch {
+                                    print("Error copying file from external source: \(error)")
+                                }
+                            }
                         }
                     }
-                    fileSystem.loadFiles()
                     return true
                 }
                 .contextMenu {
