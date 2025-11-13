@@ -243,7 +243,8 @@ struct ContentView: View {
                         autoPlayOpposite: $autoPlayOppositeLeft,
                         onSwitchToOpposite: switchLeftToRight,
                         otherPanePath: rightFileSystem.currentPath,
-                        selectedItems: $selectedLeftItems
+                        selectedItems: $selectedLeftItems,
+                        playlistManager: leftPlaylistManager
                     )
                 }
 
@@ -282,7 +283,8 @@ struct ContentView: View {
                         autoPlayOpposite: $autoPlayOppositeRight,
                         onSwitchToOpposite: switchRightToLeft,
                         otherPanePath: leftFileSystem.currentPath,
-                        selectedItems: $selectedRightItems
+                        selectedItems: $selectedRightItems,
+                        playlistManager: rightPlaylistManager
                     )
                 }
             }

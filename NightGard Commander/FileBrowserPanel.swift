@@ -6,7 +6,6 @@
 //
 
 import SwiftUI
-import UniformTypeIdentifiers
 
 struct FileBrowserPanel: View {
     @Bindable var fileSystem: FileSystemService
@@ -32,8 +31,12 @@ struct FileBrowserPanel: View {
     @State private var renameText = ""
     @State private var showAddServerSheet = false
     @State private var mountingServer: ServerConfig?
+    @State private var showScanDialog = false
+    @State private var folderToScan: FileItem?
     @FocusState private var isNewItemFocused: Bool
     @FocusState private var isRenameFocused: Bool
+
+    let playlistManager: PlaylistManager?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -263,6 +266,15 @@ struct FileBrowserPanel: View {
                                     moveToOtherPane(item: item)
                                 }
 
+                                // Scan for media (directories only)
+                                if item.isDirectory {
+                                    Divider()
+                                    Button("Scan for Media...") {
+                                        folderToScan = item
+                                        showScanDialog = true
+                                    }
+                                }
+
                                 // Add to playlist for media files
                                 if isMediaFile(item), let addAction = onAddToPlaylist {
                                     Divider()
@@ -297,32 +309,11 @@ struct FileBrowserPanel: View {
                         fileSystem.loadFiles()
                         return true
                     }
-                        .onDrop(of: [.fileURL], isTargeted: nil) { providers in
-                        // Accept file drops from desktop/Finder onto folders
-                        guard item.isDirectory else { return false }
-
-                        for provider in providers {
-                            _ = provider.loadObject(ofClass: URL.self) { url, error in
-                                guard let sourceURL = url, error == nil else { return }
-                                DispatchQueue.main.async {
-                                    do {
-                                        let fileName = sourceURL.lastPathComponent
-                                        let destURL = URL(fileURLWithPath: item.path).appendingPathComponent(fileName)
-                                        try FileManager.default.copyItem(at: sourceURL, to: destURL)
-                                        fileSystem.loadFiles()
-                                    } catch {
-                                        print("Error copying file from external source: \(error)")
-                                    }
-                                }
-                            }
-                        }
-                        return true
-                    }
                     }
                 }
                 .listStyle(.plain)
                 .dropDestination(for: String.self) { droppedPaths, location in
-                    // Drop onto pane copies to current directory (use Move ⌘6 for actual moves)
+                    // Drop onto pane copies to current directory (internal drags)
                     for sourcePath in droppedPaths {
                         do {
                             let sourceURL = URL(fileURLWithPath: sourcePath)
@@ -334,25 +325,6 @@ struct FileBrowserPanel: View {
                         }
                     }
                     fileSystem.loadFiles()
-                    return true
-                }
-                .onDrop(of: [.fileURL], isTargeted: nil) { providers in
-                    // Accept file drops from desktop/Finder - copy to current directory
-                    for provider in providers {
-                        _ = provider.loadObject(ofClass: URL.self) { url, error in
-                            guard let sourceURL = url, error == nil else { return }
-                            DispatchQueue.main.async {
-                                do {
-                                    let fileName = sourceURL.lastPathComponent
-                                    let destURL = URL(fileURLWithPath: fileSystem.currentPath).appendingPathComponent(fileName)
-                                    try FileManager.default.copyItem(at: sourceURL, to: destURL)
-                                    fileSystem.loadFiles()
-                                } catch {
-                                    print("Error copying file from external source: \(error)")
-                                }
-                            }
-                        }
-                    }
                     return true
                 }
                 .contextMenu {
@@ -430,6 +402,16 @@ struct FileBrowserPanel: View {
         .sheet(isPresented: $showAddServerSheet) {
             ServerConfigSheet(serverManager: serverManager) { server, password in
                 handleAddServer(server, password: password)
+            }
+        }
+        .sheet(isPresented: $showScanDialog) {
+            if let folder = folderToScan {
+                ScanForMediaDialog(
+                    sourceFolder: folder,
+                    destinationPath: otherPanePath,
+                    playlistManager: playlistManager,
+                    isPresented: $showScanDialog
+                )
             }
         }
     }

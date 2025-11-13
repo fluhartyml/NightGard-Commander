@@ -119,25 +119,6 @@ struct PlaylistPanel: View {
                     }
                     return true
                 }
-                .onDrop(of: [.fileURL], isTargeted: nil) { providers in
-                    // Accept file drops from desktop/Finder - add to playlist
-                    for provider in providers {
-                        _ = provider.loadObject(ofClass: URL.self) { url, error in
-                            guard let sourceURL = url, error == nil else { return }
-                            DispatchQueue.main.async {
-                                let fileItem = FileItem(
-                                    name: sourceURL.lastPathComponent,
-                                    path: sourceURL.path,
-                                    isDirectory: false,
-                                    size: 0,
-                                    modificationDate: Date()
-                                )
-                                playlistManager.addItem(fileItem)
-                            }
-                        }
-                    }
-                    return true
-                }
             }
 
             Divider()
