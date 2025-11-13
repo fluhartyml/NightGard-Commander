@@ -91,9 +91,12 @@ struct PlaylistPanel: View {
                             }
                         }
                         .onDrag {
-                            // Provide file URL for dragging (enables copy to desktop/Finder)
+                            // Provide both String path (internal) and URL (external/desktop)
                             let url = URL(fileURLWithPath: item.path)
-                            return NSItemProvider(object: url as NSURL)
+                            let provider = NSItemProvider()
+                            provider.registerObject(item.path as NSString, visibility: .all)
+                            provider.registerObject(url as NSURL, visibility: .all)
+                            return provider
                         }
                     }
                     .onMove { from, to in

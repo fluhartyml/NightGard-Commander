@@ -265,7 +265,10 @@ struct FileBrowserPanel: View {
                         }
                         .onDrag {
                             let url = URL(fileURLWithPath: item.path)
-                            return NSItemProvider(object: url as NSURL)
+                            let provider = NSItemProvider()
+                            provider.registerObject(item.path as NSString, visibility: .all)
+                            provider.registerObject(url as NSURL, visibility: .all)
+                            return provider
                         }
                         .dropDestination(for: String.self) { droppedPaths, location in
                         // Only allow drop if this is a directory
