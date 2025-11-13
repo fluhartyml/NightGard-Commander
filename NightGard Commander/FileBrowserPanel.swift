@@ -167,9 +167,10 @@ struct FileBrowserPanel: View {
 
                     // Regular file list
                     ForEach(fileSystem.files) { item in
+                        let icon = iconForFile(item)
                         HStack(spacing: 8) {
-                            Image(systemName: item.isDirectory ? "folder.fill" : "doc.fill")
-                                .foregroundColor(item.isDirectory ? .blue : .secondary)
+                            Image(systemName: icon.name)
+                                .foregroundColor(icon.color)
                                 .frame(width: 20)
 
                             if renamingItem?.id == item.id {
@@ -377,6 +378,35 @@ struct FileBrowserPanel: View {
             ServerConfigSheet(serverManager: serverManager) { server, password in
                 handleAddServer(server, password: password)
             }
+        }
+    }
+
+    private func iconForFile(_ item: FileItem) -> (name: String, color: Color) {
+        if item.isDirectory {
+            return ("folder.fill", .blue)
+        }
+
+        let ext = (item.name as NSString).pathExtension.lowercased()
+
+        // Audio files
+        if ["mp3", "m4a", "wav", "aiff", "aac", "flac", "ogg"].contains(ext) {
+            return ("music.note", Color(red: 0.85, green: 0.75, blue: 0.20))
+        }
+        // Video files
+        else if ["mp4", "mov", "m4v", "avi", "mkv"].contains(ext) {
+            return ("video.fill", .purple)
+        }
+        // Image files
+        else if ["png", "jpg", "jpeg", "gif", "bmp", "tiff", "heic", "webp"].contains(ext) {
+            return ("photo.fill", .blue)
+        }
+        // Text files
+        else if ["txt", "md", "rb", "json", "swift", "log", "xml", "yaml", "yml"].contains(ext) {
+            return ("doc.text.fill", .secondary)
+        }
+        // Generic file
+        else {
+            return ("doc.fill", .secondary)
         }
     }
 
