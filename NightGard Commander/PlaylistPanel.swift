@@ -10,8 +10,12 @@ import UniformTypeIdentifiers
 
 struct PlaylistPanel: View {
     @Bindable var playlistManager: PlaylistManager
+    let isFocused: Bool
+    let onFocus: () -> Void
+    let onItemSelect: (FileItem) -> Void
     @State private var showSavePanel = false
     @State private var showLoadPanel = false
+    @State private var selectedItem: PlaylistItem?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -64,6 +68,20 @@ struct PlaylistPanel: View {
                             }
 
                             Spacer()
+                        }
+                        .listRowBackground(rowBackground(for: item))
+                        .onTapGesture {
+                            selectedItem = item
+                            // Convert PlaylistItem to FileItem for ContentView
+                            let fileItem = FileItem(
+                                name: item.name,
+                                path: item.path,
+                                isDirectory: false,
+                                size: 0,
+                                modificationDate: Date()
+                            )
+                            onItemSelect(fileItem)
+                            onFocus()
                         }
                         .contextMenu {
                             Button("Remove from Playlist") {
@@ -149,6 +167,16 @@ struct PlaylistPanel: View {
             } else if case .failure(let error) = result {
                 print("Error saving playlist: \(error)")
             }
+        }
+    }
+
+    private func rowBackground(for item: PlaylistItem) -> Color {
+        if selectedItem?.id == item.id && isFocused {
+            return Color.accentColor.opacity(0.3)
+        } else if selectedItem?.id == item.id {
+            return Color.secondary.opacity(0.2)
+        } else {
+            return Color.clear
         }
     }
 }

@@ -212,7 +212,14 @@ struct ContentView: View {
             HStack(spacing: 0) {
                 // Left pane - either file browser or playlist
                 if showPlaylistInLeftPane {
-                    PlaylistPanel(playlistManager: leftPlaylistManager)
+                    PlaylistPanel(
+                        playlistManager: leftPlaylistManager,
+                        isFocused: focusedPane == .left,
+                        onFocus: { focusedPane = .left },
+                        onItemSelect: { item in
+                            selectedLeftItem = item
+                        }
+                    )
                 } else {
                     FileBrowserPanel(
                         fileSystem: leftFileSystem,
@@ -244,7 +251,14 @@ struct ContentView: View {
 
                 // Right pane - either file browser or playlist
                 if showPlaylistInRightPane {
-                    PlaylistPanel(playlistManager: rightPlaylistManager)
+                    PlaylistPanel(
+                        playlistManager: rightPlaylistManager,
+                        isFocused: focusedPane == .right,
+                        onFocus: { focusedPane = .right },
+                        onItemSelect: { item in
+                            selectedRightItem = item
+                        }
+                    )
                 } else {
                     FileBrowserPanel(
                         fileSystem: rightFileSystem,
