@@ -264,7 +264,8 @@ struct FileBrowserPanel: View {
                             }
                         }
                         .onDrag {
-                            NSItemProvider(object: item.path as NSString)
+                            let url = URL(fileURLWithPath: item.path)
+                            return NSItemProvider(object: url as NSURL)
                         }
                         .dropDestination(for: String.self) { droppedPaths, location in
                         // Only allow drop if this is a directory
@@ -284,6 +285,22 @@ struct FileBrowserPanel: View {
                         fileSystem.loadFiles()
                         return true
                     }
+                        .dropDestination(for: URL.self) { droppedURLs, location in
+                        // Accept file drops from desktop/Finder onto folders
+                        guard item.isDirectory else { return false }
+
+                        for sourceURL in droppedURLs {
+                            do {
+                                let fileName = sourceURL.lastPathComponent
+                                let destURL = URL(fileURLWithPath: item.path).appendingPathComponent(fileName)
+                                try FileManager.default.copyItem(at: sourceURL, to: destURL)
+                            } catch {
+                                print("Error copying file from external source: \(error)")
+                            }
+                        }
+                        fileSystem.loadFiles()
+                        return true
+                    }
                     }
                 }
                 .listStyle(.plain)
@@ -297,6 +314,20 @@ struct FileBrowserPanel: View {
                             try FileManager.default.copyItem(at: sourceURL, to: destURL)
                         } catch {
                             print("Error copying file: \(error)")
+                        }
+                    }
+                    fileSystem.loadFiles()
+                    return true
+                }
+                .dropDestination(for: URL.self) { droppedURLs, location in
+                    // Accept file drops from desktop/Finder - copy to current directory
+                    for sourceURL in droppedURLs {
+                        do {
+                            let fileName = sourceURL.lastPathComponent
+                            let destURL = URL(fileURLWithPath: fileSystem.currentPath).appendingPathComponent(fileName)
+                            try FileManager.default.copyItem(at: sourceURL, to: destURL)
+                        } catch {
+                            print("Error copying file from external source: \(error)")
                         }
                     }
                     fileSystem.loadFiles()

@@ -91,8 +91,9 @@ struct PlaylistPanel: View {
                             }
                         }
                         .onDrag {
-                            // Provide file path for dragging to file browser
-                            NSItemProvider(object: item.path as NSString)
+                            // Provide file URL for dragging (enables copy to desktop/Finder)
+                            let url = URL(fileURLWithPath: item.path)
+                            return NSItemProvider(object: url as NSURL)
                         }
                     }
                     .onMove { from, to in
@@ -107,6 +108,20 @@ struct PlaylistPanel: View {
                         let fileItem = FileItem(
                             name: url.lastPathComponent,
                             path: path,
+                            isDirectory: false,
+                            size: 0,
+                            modificationDate: Date()
+                        )
+                        playlistManager.addItem(fileItem)
+                    }
+                    return true
+                }
+                .dropDestination(for: URL.self) { droppedURLs, location in
+                    // Accept file drops from desktop/Finder - add to playlist
+                    for url in droppedURLs {
+                        let fileItem = FileItem(
+                            name: url.lastPathComponent,
+                            path: url.path,
                             isDirectory: false,
                             size: 0,
                             modificationDate: Date()
