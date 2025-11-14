@@ -21,6 +21,7 @@ struct FileBrowserPanel: View {
     @Binding var autoPlayOpposite: Bool
     let onSwitchToOpposite: () -> Void
     let otherPanePath: String
+    let onRefreshOtherPane: () -> Void
     @Binding var selectedItems: Set<FileItem.ID>
 
     @State private var lastSelectedItem: FileItem?
@@ -31,8 +32,9 @@ struct FileBrowserPanel: View {
     @State private var renameText = ""
     @State private var showAddServerSheet = false
     @State private var mountingServer: ServerConfig?
-    @State private var showScanDialog = false
     @State private var folderToScan: FileItem?
+    @State private var showMultiFolderScan = false
+    @State private var selectedFoldersForScan: [FileItem] = []
     @FocusState private var isNewItemFocused: Bool
     @FocusState private var isRenameFocused: Bool
 
@@ -215,15 +217,7 @@ struct FileBrowserPanel: View {
                             // Double tap - open/navigate
                             onItemDoubleClick(item)
                         }
-                        .onTapGesture(count: 1) {
-                            // Single tap - select item
-                            selectedItems.removeAll()
-                            selectedItems.insert(item.id)
-                            lastSelectedItem = item
-                            onItemSelect(item)
-                            onFocus()
-                        }
-                        .gesture(
+                        .simultaneousGesture(
                             TapGesture()
                                 .modifiers(.command)
                                 .onEnded {
@@ -234,16 +228,33 @@ struct FileBrowserPanel: View {
                                         selectedItems.insert(item.id)
                                         lastSelectedItem = item
                                     }
+                                    onItemSelect(item)
                                     onFocus()
                                 }
                         )
-                        .gesture(
+                        .simultaneousGesture(
                             TapGesture()
                                 .modifiers(.shift)
                                 .onEnded {
                                     // Shift+Click - range selection
                                     selectRange(to: item)
                                     onFocus()
+                                }
+                        )
+                        .simultaneousGesture(
+                            TapGesture()
+                                .onEnded {
+                                    // Plain click - only fires if no modifiers
+                                    let event = NSApp.currentEvent
+                                    let hasModifiers = event?.modifierFlags.contains(.command) == true ||
+                                                     event?.modifierFlags.contains(.shift) == true
+                                    if !hasModifiers {
+                                        selectedItems.removeAll()
+                                        selectedItems.insert(item.id)
+                                        lastSelectedItem = item
+                                        onItemSelect(item)
+                                        onFocus()
+                                    }
                                 }
                         )
                         .contextMenu {
@@ -253,6 +264,15 @@ struct FileBrowserPanel: View {
                                 }
                                 Button("Move \(selectedItems.count) Items to Other Pane") {
                                     moveSelectedToOtherPane()
+                                }
+
+                                // Scan for media if all selected items are directories
+                                let allFolders = fileSystem.files.filter { selectedItems.contains($0.id) }.allSatisfy { $0.isDirectory }
+                                if allFolders {
+                                    Divider()
+                                    Button("Scan \(selectedItems.count) Folders for Media...") {
+                                        scanSelectedFolders()
+                                    }
                                 }
                             } else {
                                 Button("Rename") {
@@ -271,7 +291,6 @@ struct FileBrowserPanel: View {
                                     Divider()
                                     Button("Scan for Media...") {
                                         folderToScan = item
-                                        showScanDialog = true
                                     }
                                 }
 
@@ -404,15 +423,30 @@ struct FileBrowserPanel: View {
                 handleAddServer(server, password: password)
             }
         }
-        .sheet(isPresented: $showScanDialog) {
-            if let folder = folderToScan {
-                ScanForMediaDialog(
-                    sourceFolder: folder,
-                    destinationPath: otherPanePath,
-                    playlistManager: playlistManager,
-                    isPresented: $showScanDialog
+        .sheet(item: $folderToScan) { folder in
+            ScanForMediaDialog(
+                sourceFolder: folder,
+                destinationPath: otherPanePath,
+                playlistManager: playlistManager,
+                onComplete: {
+                    onRefreshOtherPane()
+                },
+                isPresented: Binding(
+                    get: { folderToScan != nil },
+                    set: { if !$0 { folderToScan = nil } }
                 )
-            }
+            )
+        }
+        .sheet(isPresented: $showMultiFolderScan) {
+            ScanForMediaDialog(
+                sourceFolders: selectedFoldersForScan,
+                destinationPath: otherPanePath,
+                playlistManager: playlistManager,
+                onComplete: {
+                    onRefreshOtherPane()
+                },
+                isPresented: $showMultiFolderScan
+            )
         }
     }
 
@@ -558,6 +592,16 @@ struct FileBrowserPanel: View {
             moveToOtherPane(item: item)
         }
         selectedItems.removeAll()
+    }
+
+    private func scanSelectedFolders() {
+        // Get all selected folders
+        let selectedFolders = fileSystem.files.filter { selectedItems.contains($0.id) && $0.isDirectory }
+        guard !selectedFolders.isEmpty else { return }
+
+        // Store all folders and show multi-folder scan dialog
+        selectedFoldersForScan = selectedFolders
+        showMultiFolderScan = true
     }
 
     private func mountAndNavigate(_ server: ServerConfig) async {

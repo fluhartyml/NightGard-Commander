@@ -26,13 +26,21 @@ class MediaScanner {
 
     // Scan folder recursively for media files
     func scanFolder(at url: URL) async -> [URL] {
+        await scanFolders(at: [url])
+    }
+
+    // Scan multiple folders recursively for media files
+    func scanFolders(at urls: [URL]) async -> [URL] {
         isScanning = true
         foundFiles = []
         totalSize = 0
-        currentPath = url.path
         isCancelled = false
 
-        await scanRecursive(url: url)
+        for url in urls {
+            guard !isCancelled else { break }
+            currentPath = url.path
+            await scanRecursive(url: url)
+        }
 
         isScanning = false
         return foundFiles
@@ -43,17 +51,21 @@ class MediaScanner {
 
         let fileManager = FileManager.default
 
-        guard let enumerator = fileManager.enumerator(at: url, includingPropertiesForKeys: [.isDirectoryKey, .nameKey]) else {
+        guard let enumerator = fileManager.enumerator(at: url, includingPropertiesForKeys: [.isDirectoryKey, .fileSizeKey]) else {
             return
         }
+
+        var batchFiles: [URL] = []
+        var batchSize: Int64 = 0
+        var lastPath = ""
+        var lastUpdateTime = Date()
+        let updateInterval: TimeInterval = 0.3 // Update UI every 0.3 seconds
+        let batchLimit = 50 // Or every 50 files
 
         for case let fileURL as URL in enumerator {
             guard !isCancelled else { return }
 
-            // Update current path for UI
-            await MainActor.run {
-                currentPath = fileURL.path
-            }
+            lastPath = fileURL.path
 
             // Check if it's a media file
             let ext = fileURL.pathExtension.lowercased()
@@ -61,11 +73,31 @@ class MediaScanner {
                 // Get file size
                 let fileSize = (try? fileURL.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
 
-                await MainActor.run {
-                    foundFiles.append(fileURL)
-                    totalSize += Int64(fileSize)
+                batchFiles.append(fileURL)
+                batchSize += Int64(fileSize)
+
+                // Update UI in batches
+                let timeSinceUpdate = Date().timeIntervalSince(lastUpdateTime)
+                if batchFiles.count >= batchLimit || timeSinceUpdate >= updateInterval {
+                    await flushBatch(files: batchFiles, size: batchSize, path: lastPath)
+                    batchFiles.removeAll()
+                    batchSize = 0
+                    lastUpdateTime = Date()
                 }
             }
+        }
+
+        // Flush remaining files
+        if !batchFiles.isEmpty {
+            await flushBatch(files: batchFiles, size: batchSize, path: lastPath)
+        }
+    }
+
+    private func flushBatch(files: [URL], size: Int64, path: String) async {
+        await MainActor.run {
+            foundFiles.append(contentsOf: files)
+            totalSize += size
+            currentPath = path
         }
     }
 

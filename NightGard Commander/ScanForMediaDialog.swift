@@ -8,10 +8,29 @@
 import SwiftUI
 
 struct ScanForMediaDialog: View {
-    let sourceFolder: FileItem
+    let sourceFolders: [FileItem]
     let destinationPath: String
     let playlistManager: PlaylistManager?
+    let onComplete: () -> Void
     @Binding var isPresented: Bool
+
+    // Convenience init for single folder
+    init(sourceFolder: FileItem, destinationPath: String, playlistManager: PlaylistManager?, onComplete: @escaping () -> Void, isPresented: Binding<Bool>) {
+        self.sourceFolders = [sourceFolder]
+        self.destinationPath = destinationPath
+        self.playlistManager = playlistManager
+        self.onComplete = onComplete
+        self._isPresented = isPresented
+    }
+
+    // Init for multiple folders
+    init(sourceFolders: [FileItem], destinationPath: String, playlistManager: PlaylistManager?, onComplete: @escaping () -> Void, isPresented: Binding<Bool>) {
+        self.sourceFolders = sourceFolders
+        self.destinationPath = destinationPath
+        self.playlistManager = playlistManager
+        self.onComplete = onComplete
+        self._isPresented = isPresented
+    }
 
     @State private var scanner = MediaScanner()
     @State private var phase: ScanPhase = .scanning
@@ -220,7 +239,7 @@ struct ScanForMediaDialog: View {
     // MARK: - Executing View
     private var executingView: some View {
         VStack(spacing: 16) {
-            ProgressView(value: Double(processedCount), total: Double(totalCount))
+            ProgressView(value: Double(processedCount), total: Double(max(totalCount, 1)))
                 .progressViewStyle(.linear)
 
             Text("\(selectedAction.rawValue)...")
@@ -250,26 +269,47 @@ struct ScanForMediaDialog: View {
 
     // MARK: - Operations
     private func startScanning() async {
-        let sourceURL = URL(fileURLWithPath: sourceFolder.path)
-        _ = await scanner.scanFolder(at: sourceURL)
+        let sourceURLs = sourceFolders.map { URL(fileURLWithPath: $0.path) }
+        _ = await scanner.scanFolders(at: sourceURLs)
         phase = .review
     }
 
     private func executeOperation() {
+        // Validate destination path for copy/move operations
+        if selectedAction != .addToPlaylist {
+            let fileManager = FileManager.default
+            if !fileManager.fileExists(atPath: destinationPath) {
+                errorMessage = "Destination folder does not exist: \(destinationPath)"
+                showErrorAlert = true
+                return
+            }
+        }
+
         phase = .executing
         totalCount = scanner.foundFiles.count
         processedCount = 0
 
         Task {
-            switch selectedAction {
-            case .addToPlaylist:
-                await addToPlaylist()
-            case .copyToOtherPane:
-                await copyFiles()
-            case .moveToOtherPane:
-                await moveFiles()
+            do {
+                switch selectedAction {
+                case .addToPlaylist:
+                    await addToPlaylist()
+                case .copyToOtherPane:
+                    await copyFiles()
+                case .moveToOtherPane:
+                    await moveFiles()
+                }
+                await MainActor.run {
+                    phase = .complete
+                    onComplete()
+                }
+            } catch {
+                await MainActor.run {
+                    errorMessage = "Operation failed: \(error.localizedDescription)"
+                    showErrorAlert = true
+                    phase = .review
+                }
             }
-            phase = .complete
         }
     }
 
@@ -355,7 +395,11 @@ struct ScanForMediaDialog: View {
                         showErrorAlert = true
                         scanner.cancel()
                     } else {
-                        // Log other errors but continue
+                        // Show error for first failure, then continue
+                        if errorMessage == nil {
+                            errorMessage = "Failed to copy \(sourceURL.lastPathComponent): \(error.localizedDescription)\n\nContinuing with remaining files..."
+                            showErrorAlert = true
+                        }
                         print("Error processing file \(sourceURL.lastPathComponent): \(error)")
                     }
                 }
@@ -385,7 +429,6 @@ struct ScanForMediaDialog: View {
 
     // MARK: - Helpers
     private func iconForExtension(_ ext: String) -> String {
-        let lowercased = ext.lowercased()
         if scanner.getMediaType(for: URL(fileURLWithPath: "file.\(ext)")) == .audio {
             return "music.note"
         } else {
