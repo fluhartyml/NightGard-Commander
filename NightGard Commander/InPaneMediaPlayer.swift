@@ -53,7 +53,8 @@ struct InPaneMediaPlayer: View {
                     // Video player
                     if let player = player {
                         VideoPlayer(player: player)
-                            .frame(height: 200)
+                            .frame(maxWidth: .infinity)
+                            .aspectRatio(16/9, contentMode: .fit)
                             .onAppear {
                                 player.play()
                                 isPlaying = true
@@ -78,6 +79,32 @@ struct InPaneMediaPlayer: View {
                     }
                     .frame(height: 120)
                 }
+
+                // Progress slider
+                HStack(spacing: 8) {
+                    Text(formatTime(currentTime))
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                        .monospacedDigit()
+                        .frame(width: 40, alignment: .trailing)
+
+                    Slider(value: Binding(
+                        get: { currentTime },
+                        set: { newValue in
+                            seekToTime(newValue)
+                            currentTime = newValue
+                        }
+                    ), in: 0...max(duration, 0.1))
+                        .controlSize(.small)
+
+                    Text(formatTime(duration))
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                        .monospacedDigit()
+                        .frame(width: 40, alignment: .leading)
+                }
+                .padding(.horizontal, 8)
+                .padding(.top, 4)
 
                 // Playback controls
                 HStack(spacing: 12) {

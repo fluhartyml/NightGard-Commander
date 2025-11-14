@@ -7,6 +7,24 @@
 
 import Foundation
 
+enum FileSortMethod: String, CaseIterable {
+    case none = "No Sort"
+    case name = "Name"
+    case dateModified = "Date Modified"
+    case dateCreated = "Date Created"
+    case size = "Size"
+
+    var icon: String {
+        switch self {
+        case .none: return "line.3.horizontal"
+        case .name: return "textformat.abc"
+        case .dateModified: return "clock"
+        case .dateCreated: return "calendar"
+        case .size: return "chart.bar"
+        }
+    }
+}
+
 @Observable
 class FileSystemService {
     var currentPath: String
@@ -14,6 +32,7 @@ class FileSystemService {
     var errorMessage: String?
     var mountedVolumes: [VolumeItem] = []
     var lastVisitedFolder: String? = nil // Track folder we came from for scroll restoration
+    var sortMethod: FileSortMethod = .none
 
     private let fileManager = FileManager.default
 
@@ -56,12 +75,12 @@ class FileSystemService {
             let url = URL(fileURLWithPath: currentPath)
             let contents = try fileManager.contentsOfDirectory(
                 at: url,
-                includingPropertiesForKeys: [.isDirectoryKey, .fileSizeKey, .contentModificationDateKey, .isSymbolicLinkKey],
+                includingPropertiesForKeys: [.isDirectoryKey, .fileSizeKey, .contentModificationDateKey, .creationDateKey, .isSymbolicLinkKey],
                 options: [.skipsHiddenFiles]
             )
 
             files = contents.compactMap { url -> FileItem? in
-                guard let resourceValues = try? url.resourceValues(forKeys: [.isDirectoryKey, .fileSizeKey, .contentModificationDateKey, .isSymbolicLinkKey]) else {
+                guard let resourceValues = try? url.resourceValues(forKeys: [.isDirectoryKey, .fileSizeKey, .contentModificationDateKey, .creationDateKey, .isSymbolicLinkKey]) else {
                     return nil
                 }
 
@@ -74,14 +93,28 @@ class FileSystemService {
                     path: url.path,
                     isDirectory: actualIsDirectory,
                     size: resourceValues.fileSize ?? 0,
-                    modificationDate: resourceValues.contentModificationDate ?? Date()
+                    modificationDate: resourceValues.contentModificationDate ?? Date(),
+                    creationDate: resourceValues.creationDate ?? Date()
                 )
             }.sorted { item1, item2 in
-                // Directories first, then alphabetical
+                // Directories first
                 if item1.isDirectory != item2.isDirectory {
                     return item1.isDirectory
                 }
-                return item1.name.localizedCaseInsensitiveCompare(item2.name) == .orderedAscending
+
+                // Then sort by selected method
+                switch sortMethod {
+                case .none:
+                    return false  // Keep filesystem order
+                case .name:
+                    return item1.name.localizedCaseInsensitiveCompare(item2.name) == .orderedAscending
+                case .dateModified:
+                    return item1.modificationDate > item2.modificationDate
+                case .dateCreated:
+                    return item1.creationDate > item2.creationDate
+                case .size:
+                    return item1.size > item2.size
+                }
             }
 
         } catch {
@@ -135,6 +168,7 @@ struct FileItem: Identifiable, Hashable {
     let isDirectory: Bool
     let size: Int
     let modificationDate: Date
+    let creationDate: Date
 
     var displaySize: String {
         if isDirectory {

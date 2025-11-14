@@ -6,29 +6,32 @@
 //
 
 import SwiftUI
+import AppKit
 
 struct ScanForMediaDialog: View {
     let sourceFolders: [FileItem]
-    let destinationPath: String
     let playlistManager: PlaylistManager?
     let onComplete: () -> Void
+    let onNavigateOtherPane: (String) -> Void
     @Binding var isPresented: Bool
 
     // Convenience init for single folder
-    init(sourceFolder: FileItem, destinationPath: String, playlistManager: PlaylistManager?, onComplete: @escaping () -> Void, isPresented: Binding<Bool>) {
+    init(sourceFolder: FileItem, destinationPath: String, playlistManager: PlaylistManager?, onComplete: @escaping () -> Void, onNavigateOtherPane: @escaping (String) -> Void, isPresented: Binding<Bool>) {
         self.sourceFolders = [sourceFolder]
-        self.destinationPath = destinationPath
+        self._destinationPath = State(initialValue: destinationPath)
         self.playlistManager = playlistManager
         self.onComplete = onComplete
+        self.onNavigateOtherPane = onNavigateOtherPane
         self._isPresented = isPresented
     }
 
     // Init for multiple folders
-    init(sourceFolders: [FileItem], destinationPath: String, playlistManager: PlaylistManager?, onComplete: @escaping () -> Void, isPresented: Binding<Bool>) {
+    init(sourceFolders: [FileItem], destinationPath: String, playlistManager: PlaylistManager?, onComplete: @escaping () -> Void, onNavigateOtherPane: @escaping (String) -> Void, isPresented: Binding<Bool>) {
         self.sourceFolders = sourceFolders
-        self.destinationPath = destinationPath
+        self._destinationPath = State(initialValue: destinationPath)
         self.playlistManager = playlistManager
         self.onComplete = onComplete
+        self.onNavigateOtherPane = onNavigateOtherPane
         self._isPresented = isPresented
     }
 
@@ -41,6 +44,7 @@ struct ScanForMediaDialog: View {
     @State private var isProcessing = false
     @State private var errorMessage: String?
     @State private var showErrorAlert = false
+    @State private var destinationPath: String
 
     enum ScanPhase {
         case scanning
@@ -57,8 +61,8 @@ struct ScanForMediaDialog: View {
 
     enum Organization: String, CaseIterable {
         case flatten = "Flatten (all in one folder)"
-        case byExtension = "By Extension (MP3/, M4A/, MP4/...)"
-        case byMediaType = "By Media Type (Audio/, Video/)"
+        case byExtension = "Folders by Extension (MP3/, M4A/, MP4/...)"
+        case byMediaType = "Folders by Media Type (Audio/, Video/)"
     }
 
     var body: some View {
@@ -109,7 +113,7 @@ struct ScanForMediaDialog: View {
             .padding(.top)
         }
         .padding()
-        .frame(width: 600, height: 500)
+        .frame(width: 600, height: 700)
         .task {
             await startScanning()
         }
@@ -148,6 +152,7 @@ struct ScanForMediaDialog: View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Found \(scanner.foundFiles.count) media files")
                 .font(.headline)
+                .padding(.leading, 4)
 
             // Size and space info
             HStack {
@@ -227,29 +232,6 @@ struct ScanForMediaDialog: View {
                             }
                         }
                     }
-
-                    Text("Sample files:")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-
-                    VStack(alignment: .leading, spacing: 2) {
-                        ForEach(Array(scanner.foundFiles.prefix(5)), id: \.self) { url in
-                            HStack {
-                                Image(systemName: iconForExtension(url.pathExtension))
-                                    .foregroundColor(colorForMediaType(url))
-                                    .font(.caption2)
-                                Text(url.lastPathComponent)
-                                    .font(.caption)
-                                    .lineLimit(1)
-                            }
-                        }
-                        if scanner.foundFiles.count > 5 {
-                            Text("... and \(scanner.foundFiles.count - 5) more")
-                                .font(.caption2)
-                                .foregroundColor(.secondary)
-                                .padding(.leading, 20)
-                        }
-                    }
                 }
                 .padding(12)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -286,6 +268,31 @@ struct ScanForMediaDialog: View {
                         }
                     }
                     .pickerStyle(.radioGroup)
+                }
+
+                // Destination folder picker
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Destination:")
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+
+                    HStack {
+                        Text(destinationPath.isEmpty ? "No destination selected" : destinationPath)
+                            .font(.caption)
+                            .foregroundColor(destinationPath.isEmpty ? .orange : .secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+
+                        Spacer()
+
+                        Button("Choose Folder...") {
+                            chooseDestinationFolder()
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                    .padding(8)
+                    .background(Color.gray.opacity(0.1))
+                    .cornerRadius(6)
                 }
             }
         }
@@ -329,6 +336,24 @@ struct ScanForMediaDialog: View {
         phase = .review
     }
 
+    private func chooseDestinationFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.canCreateDirectories = true
+        panel.prompt = "Choose Destination"
+        panel.message = "Select the folder where files will be copied or moved"
+
+        if !destinationPath.isEmpty {
+            panel.directoryURL = URL(fileURLWithPath: destinationPath)
+        }
+
+        if panel.runModal() == .OK, let url = panel.url {
+            destinationPath = url.path
+        }
+    }
+
     private func executeOperation() {
         // Validate destination path for copy/move operations
         if selectedAction != .addToPlaylist {
@@ -338,6 +363,9 @@ struct ScanForMediaDialog: View {
                 showErrorAlert = true
                 return
             }
+
+            // Navigate other pane to destination before starting operation
+            onNavigateOtherPane(destinationPath)
         }
 
         phase = .executing
@@ -345,25 +373,17 @@ struct ScanForMediaDialog: View {
         processedCount = 0
 
         Task {
-            do {
-                switch selectedAction {
-                case .addToPlaylist:
-                    await addToPlaylist()
-                case .copyToOtherPane:
-                    await copyFiles()
-                case .moveToOtherPane:
-                    await moveFiles()
-                }
-                await MainActor.run {
-                    phase = .complete
-                    onComplete()
-                }
-            } catch {
-                await MainActor.run {
-                    errorMessage = "Operation failed: \(error.localizedDescription)"
-                    showErrorAlert = true
-                    phase = .review
-                }
+            switch selectedAction {
+            case .addToPlaylist:
+                await addToPlaylist()
+            case .copyToOtherPane:
+                await copyFiles()
+            case .moveToOtherPane:
+                await moveFiles()
+            }
+            await MainActor.run {
+                phase = .complete
+                onComplete()
             }
         }
     }
@@ -380,7 +400,8 @@ struct ScanForMediaDialog: View {
                     path: url.path,
                     isDirectory: false,
                     size: 0,
-                    modificationDate: Date()
+                    modificationDate: Date(),
+                    creationDate: Date()
                 )
                 playlistManager.addItem(fileItem)
                 processedCount += 1

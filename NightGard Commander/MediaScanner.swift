@@ -36,12 +36,15 @@ class MediaScanner {
         totalSize = 0
         isCancelled = false
 
+        print("MediaScanner: Starting scan of \(urls.count) folders")
         for url in urls {
             guard !isCancelled else { break }
+            print("MediaScanner: Scanning folder: \(url.path)")
             currentPath = url.path
             await scanRecursive(url: url)
         }
 
+        print("MediaScanner: Scan complete - found \(foundFiles.count) files")
         isScanning = false
         return foundFiles
     }
@@ -51,7 +54,17 @@ class MediaScanner {
 
         let fileManager = FileManager.default
 
-        guard let enumerator = fileManager.enumerator(at: url, includingPropertiesForKeys: [.isDirectoryKey, .fileSizeKey]) else {
+        // Create enumerator with explicit recursive options and error handling
+        guard let enumerator = fileManager.enumerator(
+            at: url,
+            includingPropertiesForKeys: [.isDirectoryKey, .fileSizeKey],
+            options: [],  // Empty options = descend into subdirectories
+            errorHandler: { url, error in
+                print("MediaScanner error at \(url.path): \(error.localizedDescription)")
+                return true  // Continue enumeration despite errors
+            }
+        ) else {
+            print("MediaScanner: Failed to create enumerator for \(url.path)")
             return
         }
 
@@ -61,15 +74,19 @@ class MediaScanner {
         var lastUpdateTime = Date()
         let updateInterval: TimeInterval = 0.3 // Update UI every 0.3 seconds
         let batchLimit = 50 // Or every 50 files
+        var totalFilesChecked = 0
+        var mediaFilesFound = 0
 
-        for case let fileURL as URL in enumerator {
+        while let fileURL = enumerator.nextObject() as? URL {
             guard !isCancelled else { return }
+            totalFilesChecked += 1
 
             lastPath = fileURL.path
 
             // Check if it's a media file
             let ext = fileURL.pathExtension.lowercased()
             if allMediaExtensions.contains(ext) {
+                mediaFilesFound += 1
                 // Get file size
                 let fileSize = (try? fileURL.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
 
@@ -91,6 +108,8 @@ class MediaScanner {
         if !batchFiles.isEmpty {
             await flushBatch(files: batchFiles, size: batchSize, path: lastPath)
         }
+
+        print("MediaScanner: Checked \(totalFilesChecked) items, found \(mediaFilesFound) media files in \(url.path)")
     }
 
     private func flushBatch(files: [URL], size: Int64, path: String) async {

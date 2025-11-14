@@ -100,6 +100,14 @@ struct ContentView: View {
         switch fileType {
         case .folder:
             activeFocusedFileSystem.navigateToFolder(item.path)
+            // Clear media player when navigating to a different folder
+            if focusedPane == .left {
+                leftCurrentMedia = nil
+                showLeftMediaPlayer = false
+            } else {
+                rightCurrentMedia = nil
+                showRightMediaPlayer = false
+            }
         case .text:
             showTextEditor = true
         case .audio, .video:
@@ -247,6 +255,9 @@ struct ContentView: View {
                             leftFileSystem.loadFiles()
                             rightFileSystem.loadFiles()
                         },
+                        onNavigateOtherPane: { path in
+                            rightFileSystem.navigateToFolder(path)
+                        },
                         selectedItems: $selectedLeftItems,
                         playlistManager: leftPlaylistManager
                     )
@@ -290,6 +301,9 @@ struct ContentView: View {
                         onRefreshOtherPane: {
                             leftFileSystem.loadFiles()
                             rightFileSystem.loadFiles()
+                        },
+                        onNavigateOtherPane: { path in
+                            leftFileSystem.navigateToFolder(path)
                         },
                         selectedItems: $selectedRightItems,
                         playlistManager: rightPlaylistManager

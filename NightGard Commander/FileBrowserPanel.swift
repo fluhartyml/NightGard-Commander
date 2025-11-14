@@ -22,6 +22,7 @@ struct FileBrowserPanel: View {
     let onSwitchToOpposite: () -> Void
     let otherPanePath: String
     let onRefreshOtherPane: () -> Void
+    let onNavigateOtherPane: (String) -> Void
     @Binding var selectedItems: Set<FileItem.ID>
 
     @State private var lastSelectedItem: FileItem?
@@ -35,10 +36,33 @@ struct FileBrowserPanel: View {
     @State private var folderToScan: FileItem?
     @State private var showMultiFolderScan = false
     @State private var selectedFoldersForScan: [FileItem] = []
+    @State private var showPlaylistsOnly = false
+    @State private var isMovingCurrentMedia = false
+    @State private var showDuplicateAlert = false
+    @State private var pendingMoveItem: FileItem?
     @FocusState private var isNewItemFocused: Bool
     @FocusState private var isRenameFocused: Bool
 
     let playlistManager: PlaylistManager?
+
+    // Filter files to show only playlists if enabled
+    private var displayedFiles: [FileItem] {
+        if showPlaylistsOnly {
+            return fileSystem.files.filter { item in
+                let ext = (item.name as NSString).pathExtension.lowercased()
+                return ext == "m3u" || ext == "m3u8"
+            }
+        }
+        return fileSystem.files
+    }
+
+    // Count playlist files in current directory
+    private var playlistCount: Int {
+        fileSystem.files.filter { item in
+            let ext = (item.name as NSString).pathExtension.lowercased()
+            return ext == "m3u" || ext == "m3u8"
+        }.count
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -50,6 +74,8 @@ struct FileBrowserPanel: View {
                         ForEach(fileSystem.mountedVolumes) { volume in
                             Button(action: {
                                 fileSystem.navigateToFolder(volume.path)
+                                currentMedia = nil
+                                showMediaPlayer = false
                             }) {
                                 HStack {
                                     Image(systemName: "internaldrive.fill")
@@ -96,8 +122,57 @@ struct FileBrowserPanel: View {
                 .frame(width: 30)
                 .padding(.leading, 8)
 
+                // Sort method selector
+                Menu {
+                    ForEach(FileSortMethod.allCases, id: \.self) { method in
+                        Button(action: {
+                            fileSystem.sortMethod = method
+                            fileSystem.loadFiles()
+                        }) {
+                            HStack {
+                                Image(systemName: method.icon)
+                                Text(method.rawValue)
+                                Spacer()
+                                if fileSystem.sortMethod == method {
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                    }
+                } label: {
+                    Image(systemName: fileSystem.sortMethod.icon)
+                }
+                .menuStyle(.borderlessButton)
+                .frame(width: 30)
+
+                // Playlist filter button
+                Button(action: {
+                    showPlaylistsOnly.toggle()
+                }) {
+                    ZStack(alignment: .topTrailing) {
+                        Image(systemName: "music.note.list")
+                            .foregroundColor(showPlaylistsOnly ? .accentColor : .secondary)
+
+                        if playlistCount > 0 {
+                            Text("\(playlistCount)")
+                                .font(.system(size: 9, weight: .bold))
+                                .foregroundColor(.white)
+                                .padding(2)
+                                .background(Circle().fill(Color.red))
+                                .offset(x: 8, y: -8)
+                        }
+                    }
+                }
+                .buttonStyle(.borderless)
+                .frame(width: 30)
+                .help(showPlaylistsOnly ? "Show All Files" : "Show Playlists Only (\(playlistCount))")
+
                 if fileSystem.canNavigateUp() {
-                    Button(action: { fileSystem.navigateUp() }) {
+                    Button(action: {
+                        fileSystem.navigateUp()
+                        currentMedia = nil
+                        showMediaPlayer = false
+                    }) {
                         HStack(spacing: 4) {
                             Image(systemName: "arrow.up.circle.fill")
                             Text("..")
@@ -172,7 +247,7 @@ struct FileBrowserPanel: View {
                     }
 
                     // Regular file list
-                    ForEach(fileSystem.files) { item in
+                    ForEach(displayedFiles) { item in
                         let icon = iconForFile(item)
                         HStack(spacing: 8) {
                             Image(systemName: icon.name)
@@ -391,6 +466,8 @@ struct FileBrowserPanel: View {
                     ForEach(Array(fileSystem.breadcrumbs.enumerated()), id: \.element.id) { index, breadcrumb in
                         Button(action: {
                             fileSystem.navigateToFolder(breadcrumb.path)
+                            currentMedia = nil
+                            showMediaPlayer = false
                         }) {
                             Text(breadcrumb.name)
                                 .font(.caption)
@@ -418,6 +495,69 @@ struct FileBrowserPanel: View {
         .onAppear {
             fileSystem.loadFiles()
         }
+        .onChange(of: fileSystem.files) { oldFiles, newFiles in
+            // Check if currently playing media file still exists
+            if let media = currentMedia {
+                let fileStillExists = newFiles.contains { $0.path == media.path }
+                if !fileStillExists {
+                    // File was removed - check if it was moved or deleted
+                    print("DEBUG: File removed - isMovingCurrentMedia: \(isMovingCurrentMedia), autoPlayNext: \(autoPlayNext)")
+                    if isMovingCurrentMedia {
+                        // File was moved - auto-advance to next track if auto-play is enabled
+                        isMovingCurrentMedia = false
+                        print("DEBUG: File was moved, checking auto-play")
+                        if autoPlayNext {
+                            // Find the media files (audio/video only)
+                            let mediaFiles = newFiles.filter { !$0.isDirectory && isMediaFile($0) }
+                            // Find what would have been the next file after the moved one
+                            let oldMediaFiles = oldFiles.filter { !$0.isDirectory && isMediaFile($0) }
+                            print("DEBUG: Old media files: \(oldMediaFiles.count), New media files: \(mediaFiles.count)")
+                            if let oldIndex = oldMediaFiles.firstIndex(where: { $0.id == media.id }) {
+                                print("DEBUG: Found old index: \(oldIndex), mediaFiles.count: \(mediaFiles.count)")
+                                if oldIndex < mediaFiles.count {
+                                    // Play the file that's now at the same position
+                                    print("DEBUG: Playing file at same position: \(mediaFiles[oldIndex].name)")
+                                    currentMedia = mediaFiles[oldIndex]
+                                } else if !mediaFiles.isEmpty {
+                                    // Past the end, play first file
+                                    print("DEBUG: Past end, playing first: \(mediaFiles[0].name)")
+                                    currentMedia = mediaFiles[0]
+                                } else {
+                                    print("DEBUG: No more media files")
+                                    currentMedia = nil
+                                    showMediaPlayer = false
+                                }
+                            } else if !mediaFiles.isEmpty {
+                                // If we can't find the position, play the first file
+                                print("DEBUG: Couldn't find old index, playing first: \(mediaFiles[0].name)")
+                                currentMedia = mediaFiles[0]
+                            } else {
+                                // No more media files - stop
+                                print("DEBUG: No media files found")
+                                currentMedia = nil
+                                showMediaPlayer = false
+                            }
+                        } else {
+                            // Auto-play disabled - just stop
+                            currentMedia = nil
+                            showMediaPlayer = false
+                        }
+                    } else {
+                        // File was deleted (not moved) - stop playback
+                        currentMedia = nil
+                        showMediaPlayer = false
+                    }
+                }
+            }
+        }
+        .onChange(of: currentMedia) { _, newMedia in
+            // Update selection highlight when media changes (e.g., auto-play)
+            if let media = newMedia {
+                selectedItems.removeAll()
+                selectedItems.insert(media.id)
+                onItemSelect(media)
+            }
+        }
         .sheet(isPresented: $showAddServerSheet) {
             ServerConfigSheet(serverManager: serverManager) { server, password in
                 handleAddServer(server, password: password)
@@ -431,6 +571,7 @@ struct FileBrowserPanel: View {
                 onComplete: {
                     onRefreshOtherPane()
                 },
+                onNavigateOtherPane: onNavigateOtherPane,
                 isPresented: Binding(
                     get: { folderToScan != nil },
                     set: { if !$0 { folderToScan = nil } }
@@ -445,8 +586,31 @@ struct FileBrowserPanel: View {
                 onComplete: {
                     onRefreshOtherPane()
                 },
+                onNavigateOtherPane: onNavigateOtherPane,
                 isPresented: $showMultiFolderScan
             )
+        }
+        .alert("File Already Exists", isPresented: $showDuplicateAlert) {
+            Button("Replace", role: .destructive) {
+                if let item = pendingMoveItem {
+                    executeMoveToOtherPane(item: item, replace: true)
+                }
+                pendingMoveItem = nil
+            }
+            Button("Keep Both") {
+                if let item = pendingMoveItem {
+                    executeMoveToOtherPane(item: item, replace: false)
+                }
+                pendingMoveItem = nil
+            }
+            Button("Cancel", role: .cancel) {
+                pendingMoveItem = nil
+                isMovingCurrentMedia = false
+            }
+        } message: {
+            if let item = pendingMoveItem {
+                Text("A file named \"\(item.name)\" already exists in the destination. Do you want to replace it or keep both?")
+            }
         }
     }
 
@@ -575,14 +739,56 @@ struct FileBrowserPanel: View {
     }
 
     private func moveToOtherPane(item: FileItem) {
+        let fileManager = FileManager.default
+        let sourceURL = URL(fileURLWithPath: item.path)
+        let fileName = sourceURL.lastPathComponent
+        let destURL = URL(fileURLWithPath: otherPanePath).appendingPathComponent(fileName)
+
+        // Check if file exists at destination
+        if fileManager.fileExists(atPath: destURL.path) {
+            // Show alert asking user what to do
+            pendingMoveItem = item
+            showDuplicateAlert = true
+            return
+        }
+
+        // No conflict - proceed with move
+        executeMoveToOtherPane(item: item, replace: false)
+    }
+
+    private func executeMoveToOtherPane(item: FileItem, replace: Bool) {
+        // Check if we're moving the currently playing file
+        if let media = currentMedia, media.path == item.path {
+            isMovingCurrentMedia = true
+        }
+
         do {
+            let fileManager = FileManager.default
             let sourceURL = URL(fileURLWithPath: item.path)
             let fileName = sourceURL.lastPathComponent
-            let destURL = URL(fileURLWithPath: otherPanePath).appendingPathComponent(fileName)
-            try FileManager.default.moveItem(at: sourceURL, to: destURL)
+            var destURL = URL(fileURLWithPath: otherPanePath).appendingPathComponent(fileName)
+
+            if replace && fileManager.fileExists(atPath: destURL.path) {
+                // Replace existing file
+                try fileManager.removeItem(at: destURL)
+            } else if !replace && fileManager.fileExists(atPath: destURL.path) {
+                // Keep both - add suffix
+                let nameWithoutExt = (fileName as NSString).deletingPathExtension
+                let ext = (fileName as NSString).pathExtension
+                var counter = 2
+
+                while fileManager.fileExists(atPath: destURL.path) {
+                    let newName = ext.isEmpty ? "\(nameWithoutExt)-\(counter)" : "\(nameWithoutExt)-\(counter).\(ext)"
+                    destURL = URL(fileURLWithPath: otherPanePath).appendingPathComponent(newName)
+                    counter += 1
+                }
+            }
+
+            try fileManager.moveItem(at: sourceURL, to: destURL)
             fileSystem.loadFiles()
         } catch {
             print("Error moving to other pane: \(error)")
+            isMovingCurrentMedia = false
         }
     }
 

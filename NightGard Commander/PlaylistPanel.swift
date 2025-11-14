@@ -78,7 +78,8 @@ struct PlaylistPanel: View {
                                 path: item.path,
                                 isDirectory: false,
                                 size: 0,
-                                modificationDate: Date()
+                                modificationDate: Date(),
+                                creationDate: Date()
                             )
                             onItemSelect(fileItem)
                             onFocus()
@@ -113,7 +114,8 @@ struct PlaylistPanel: View {
                             path: path,
                             isDirectory: false,
                             size: 0,
-                            modificationDate: Date()
+                            modificationDate: Date(),
+                            creationDate: Date()
                         )
                         playlistManager.addItem(fileItem)
                     }
