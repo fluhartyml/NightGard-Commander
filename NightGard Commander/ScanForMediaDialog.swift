@@ -182,25 +182,80 @@ struct ScanForMediaDialog: View {
                 .cornerRadius(4)
             }
 
-            // File list
-            ScrollView {
-                VStack(alignment: .leading, spacing: 4) {
-                    ForEach(scanner.foundFiles, id: \.self) { url in
-                        HStack {
-                            Image(systemName: iconForExtension(url.pathExtension))
-                                .foregroundColor(colorForMediaType(url))
-                            Text(url.lastPathComponent)
-                                .font(.caption)
-                            Spacer()
-                            Text(url.deletingLastPathComponent().lastPathComponent)
-                                .font(.caption2)
-                                .foregroundColor(.secondary)
+            // File list or summary
+            if scanner.foundFiles.count <= 50 {
+                // Show full file list for small batches
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(scanner.foundFiles, id: \.self) { url in
+                            HStack {
+                                Image(systemName: iconForExtension(url.pathExtension))
+                                    .foregroundColor(colorForMediaType(url))
+                                Text(url.lastPathComponent)
+                                    .font(.caption)
+                                Spacer()
+                                Text(url.deletingLastPathComponent().lastPathComponent)
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                            }
                         }
                     }
                 }
+                .frame(maxHeight: 200)
+                .border(Color.gray.opacity(0.3))
+            } else {
+                // Show summary for large batches
+                VStack(alignment: .leading, spacing: 12) {
+                    let audioCount = scanner.foundFiles.filter { scanner.getMediaType(for: $0) == .audio }.count
+                    let videoCount = scanner.foundFiles.filter { scanner.getMediaType(for: $0) == .video }.count
+
+                    HStack(spacing: 16) {
+                        if audioCount > 0 {
+                            HStack(spacing: 4) {
+                                Image(systemName: "music.note")
+                                    .foregroundColor(Color(red: 0.85, green: 0.65, blue: 0.13))
+                                Text("\(audioCount) Audio")
+                                    .font(.subheadline)
+                            }
+                        }
+                        if videoCount > 0 {
+                            HStack(spacing: 4) {
+                                Image(systemName: "film")
+                                    .foregroundColor(Color(red: 0.61, green: 0.35, blue: 0.71))
+                                Text("\(videoCount) Video")
+                                    .font(.subheadline)
+                            }
+                        }
+                    }
+
+                    Text("Sample files:")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        ForEach(Array(scanner.foundFiles.prefix(5)), id: \.self) { url in
+                            HStack {
+                                Image(systemName: iconForExtension(url.pathExtension))
+                                    .foregroundColor(colorForMediaType(url))
+                                    .font(.caption2)
+                                Text(url.lastPathComponent)
+                                    .font(.caption)
+                                    .lineLimit(1)
+                            }
+                        }
+                        if scanner.foundFiles.count > 5 {
+                            Text("... and \(scanner.foundFiles.count - 5) more")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                                .padding(.leading, 20)
+                        }
+                    }
+                }
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.secondary.opacity(0.05))
+                .cornerRadius(8)
             }
-            .frame(maxHeight: 200)
-            .border(Color.gray.opacity(0.3))
 
             Divider()
 
@@ -400,7 +455,7 @@ struct ScanForMediaDialog: View {
                             errorMessage = "Failed to copy \(sourceURL.lastPathComponent): \(error.localizedDescription)\n\nContinuing with remaining files..."
                             showErrorAlert = true
                         }
-                        print("Error processing file \(sourceURL.lastPathComponent): \(error)")
+                        // Silently continue - first error already shown to user
                     }
                 }
 
