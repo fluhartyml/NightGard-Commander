@@ -120,9 +120,16 @@ struct ContentView: View {
         case .image:
             showImagePreview = true
         case .webloc:
-            // Open webloc file with system default handler (Apple Music app)
-            let url = URL(fileURLWithPath: item.path)
-            NSWorkspace.shared.open(url)
+            // Check if this is an Apple Music audio link (.media.webloc)
+            let filename = item.name.lowercased()
+            if filename.hasSuffix(".media.webloc") {
+                // Apple Music song/album - play in InPaneMediaPlayer with MusicKit
+                startPlayingMedia(item: item)
+            } else {
+                // Video webloc or regular Safari webloc - open externally
+                let url = URL(fileURLWithPath: item.path)
+                NSWorkspace.shared.open(url)
+            }
         case .other:
             break // Do nothing for unknown file types
         }

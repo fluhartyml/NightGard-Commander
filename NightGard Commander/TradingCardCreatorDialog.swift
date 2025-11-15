@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import Combine
 
 struct TradingCardCreatorDialog: View {
     @Binding var isPresented: Bool

@@ -302,6 +302,7 @@ struct FileBrowserPanel: View {
                                     .frame(width: 120, alignment: .trailing)
                             }
                         }
+                        .contentShape(Rectangle()) // Makes entire row clickable
                         .tag(item.id)
                         .onTapGesture(count: 2) {
                             // Double tap - open/navigate
@@ -333,15 +334,36 @@ struct FileBrowserPanel: View {
                         )
                         .contextMenu {
                             if selectedItems.count > 1 {
-                                Button("Delete \(selectedItems.count) Items") {
-                                    deleteSelectedItems()
+                                Button("Open") {
+                                    // Open first selected item
+                                    if let firstItem = fileSystem.files.first(where: { selectedItems.contains($0.id) }) {
+                                        onItemDoubleClick(firstItem)
+                                    }
+                                }
+                                Divider()
+                                Button("Copy \(selectedItems.count) Items to Other Pane") {
+                                    copySelectedToOtherPane()
                                 }
                                 Button("Move \(selectedItems.count) Items to Other Pane") {
                                     moveSelectedToOtherPane()
                                 }
+                                Divider()
+                                Button("Delete \(selectedItems.count) Items") {
+                                    deleteSelectedItems()
+                                }
+
+                                // Add to playlist if any selected items are media files
+                                let selectedFiles = fileSystem.files.filter { selectedItems.contains($0.id) }
+                                let hasMedia = selectedFiles.contains { isMediaFile($0) }
+                                if hasMedia, let addAction = onAddToPlaylist {
+                                    Divider()
+                                    Button("Add \(selectedItems.count) Items to Playlist") {
+                                        addSelectedToPlaylist()
+                                    }
+                                }
 
                                 // Scan for media if all selected items are directories
-                                let allFolders = fileSystem.files.filter { selectedItems.contains($0.id) }.allSatisfy { $0.isDirectory }
+                                let allFolders = selectedFiles.allSatisfy { $0.isDirectory }
                                 if allFolders {
                                     Divider()
                                     Button("Scan \(selectedItems.count) Folders for Media...") {
@@ -352,12 +374,16 @@ struct FileBrowserPanel: View {
                                 Button("Rename") {
                                     startRenaming(item: item)
                                 }
-                                Button("Delete") {
-                                    deleteItem(item: item)
-                                }
                                 Divider()
+                                Button("Copy to Other Pane") {
+                                    copyToOtherPane(item: item)
+                                }
                                 Button("Move to Other Pane") {
                                     moveToOtherPane(item: item)
+                                }
+                                Divider()
+                                Button("Delete") {
+                                    deleteItem(item: item)
                                 }
 
                                 // Scan for media (directories only)
@@ -809,10 +835,53 @@ struct FileBrowserPanel: View {
         }
     }
 
+    private func copyToOtherPane(item: FileItem) {
+        let fileManager = FileManager.default
+
+        do {
+            let sourceURL = URL(fileURLWithPath: item.path)
+            let fileName = sourceURL.lastPathComponent
+            var destURL = URL(fileURLWithPath: otherPanePath).appendingPathComponent(fileName)
+
+            // Handle duplicates by auto-incrementing
+            var counter = 2
+            while fileManager.fileExists(atPath: destURL.path) {
+                let fileExtension = sourceURL.pathExtension
+                let baseName = sourceURL.deletingPathExtension().lastPathComponent
+                let newName = fileExtension.isEmpty ? "\(baseName) \(counter)" : "\(baseName) \(counter).\(fileExtension)"
+                destURL = URL(fileURLWithPath: otherPanePath).appendingPathComponent(newName)
+                counter += 1
+            }
+
+            try fileManager.copyItem(at: sourceURL, to: destURL)
+            fileSystem.loadFiles()
+        } catch {
+            print("Error copying to other pane: \(error)")
+        }
+    }
+
+    private func copySelectedToOtherPane() {
+        let itemsToCopy = fileSystem.files.filter { selectedItems.contains($0.id) }
+        for item in itemsToCopy {
+            copyToOtherPane(item: item)
+        }
+        selectedItems.removeAll()
+    }
+
     private func moveSelectedToOtherPane() {
         let itemsToMove = fileSystem.files.filter { selectedItems.contains($0.id) }
         for item in itemsToMove {
             moveToOtherPane(item: item)
+        }
+        selectedItems.removeAll()
+    }
+
+    private func addSelectedToPlaylist() {
+        guard let addAction = onAddToPlaylist else { return }
+
+        let itemsToAdd = fileSystem.files.filter { selectedItems.contains($0.id) && isMediaFile($0) }
+        for item in itemsToAdd {
+            addAction(item)
         }
         selectedItems.removeAll()
     }
