@@ -121,6 +121,7 @@ struct FileBrowserPanel: View {
                 .menuStyle(.borderlessButton)
                 .frame(width: 30)
                 .padding(.leading, 8)
+                .help("Switch drive or volume")
 
                 // Sort method selector
                 Menu {
@@ -144,6 +145,7 @@ struct FileBrowserPanel: View {
                 }
                 .menuStyle(.borderlessButton)
                 .frame(width: 30)
+                .help("Sort files by: \(fileSystem.sortMethod.rawValue)")
 
                 // Playlist filter button
                 Button(action: {
@@ -180,6 +182,7 @@ struct FileBrowserPanel: View {
                         }
                     }
                     .buttonStyle(.bordered)
+                    .help("Go up one folder")
                 }
 
                 Text(fileSystem.currentPath)
@@ -314,22 +317,6 @@ struct FileBrowserPanel: View {
                                     // Shift+Click - range selection
                                     selectRange(to: item)
                                     onFocus()
-                                }
-                        )
-                        .simultaneousGesture(
-                            TapGesture()
-                                .onEnded {
-                                    // Plain click - only fires if no modifiers
-                                    let event = NSApp.currentEvent
-                                    let hasModifiers = event?.modifierFlags.contains(.command) == true ||
-                                                     event?.modifierFlags.contains(.shift) == true
-                                    if !hasModifiers {
-                                        selectedItems.removeAll()
-                                        selectedItems.insert(item.id)
-                                        lastSelectedItem = item
-                                        onItemSelect(item)
-                                        onFocus()
-                                    }
                                 }
                         )
                         .contextMenu {
@@ -490,6 +477,8 @@ struct FileBrowserPanel: View {
         }
         .border(isFocused ? Color.accentColor : Color.clear, width: 2)
         .onTapGesture {
+            // Clicking empty space clears selection
+            selectedItems.removeAll()
             onFocus()
         }
         .onAppear {
@@ -501,46 +490,37 @@ struct FileBrowserPanel: View {
                 let fileStillExists = newFiles.contains { $0.path == media.path }
                 if !fileStillExists {
                     // File was removed - check if it was moved or deleted
-                    print("DEBUG: File removed - isMovingCurrentMedia: \(isMovingCurrentMedia), autoPlayNext: \(autoPlayNext)")
                     if isMovingCurrentMedia {
                         // File was moved - auto-advance to next track if auto-play is enabled
                         isMovingCurrentMedia = false
-                        print("DEBUG: File was moved, checking auto-play")
+
+                        // Force stop current player before advancing
+                        currentMedia = nil
+                        showMediaPlayer = false
+
                         if autoPlayNext {
-                            // Find the media files (audio/video only)
-                            let mediaFiles = newFiles.filter { !$0.isDirectory && isMediaFile($0) }
-                            // Find what would have been the next file after the moved one
-                            let oldMediaFiles = oldFiles.filter { !$0.isDirectory && isMediaFile($0) }
-                            print("DEBUG: Old media files: \(oldMediaFiles.count), New media files: \(mediaFiles.count)")
-                            if let oldIndex = oldMediaFiles.firstIndex(where: { $0.id == media.id }) {
-                                print("DEBUG: Found old index: \(oldIndex), mediaFiles.count: \(mediaFiles.count)")
-                                if oldIndex < mediaFiles.count {
-                                    // Play the file that's now at the same position
-                                    print("DEBUG: Playing file at same position: \(mediaFiles[oldIndex].name)")
-                                    currentMedia = mediaFiles[oldIndex]
+                            // Small delay to let player fully stop before loading next track
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                                // Find the media files (audio/video only)
+                                let mediaFiles = newFiles.filter { !$0.isDirectory && isMediaFile($0) }
+                                // Find what would have been the next file after the moved one
+                                let oldMediaFiles = oldFiles.filter { !$0.isDirectory && isMediaFile($0) }
+                                if let oldIndex = oldMediaFiles.firstIndex(where: { $0.id == media.id }) {
+                                    if oldIndex < mediaFiles.count {
+                                        // Play the file that's now at the same position
+                                        currentMedia = mediaFiles[oldIndex]
+                                        showMediaPlayer = true
+                                    } else if !mediaFiles.isEmpty {
+                                        // Past the end, play first file
+                                        currentMedia = mediaFiles[0]
+                                        showMediaPlayer = true
+                                    }
                                 } else if !mediaFiles.isEmpty {
-                                    // Past the end, play first file
-                                    print("DEBUG: Past end, playing first: \(mediaFiles[0].name)")
+                                    // If we can't find the position, play the first file
                                     currentMedia = mediaFiles[0]
-                                } else {
-                                    print("DEBUG: No more media files")
-                                    currentMedia = nil
-                                    showMediaPlayer = false
+                                    showMediaPlayer = true
                                 }
-                            } else if !mediaFiles.isEmpty {
-                                // If we can't find the position, play the first file
-                                print("DEBUG: Couldn't find old index, playing first: \(mediaFiles[0].name)")
-                                currentMedia = mediaFiles[0]
-                            } else {
-                                // No more media files - stop
-                                print("DEBUG: No media files found")
-                                currentMedia = nil
-                                showMediaPlayer = false
                             }
-                        } else {
-                            // Auto-play disabled - just stop
-                            currentMedia = nil
-                            showMediaPlayer = false
                         }
                     } else {
                         // File was deleted (not moved) - stop playback
@@ -786,8 +766,15 @@ struct FileBrowserPanel: View {
 
             try fileManager.moveItem(at: sourceURL, to: destURL)
             fileSystem.loadFiles()
-        } catch {
-            print("Error moving to other pane: \(error)")
+        } catch let error as NSError {
+            // Check if error is due to duplicate file
+            if error.domain == NSCocoaErrorDomain && error.code == 516 {
+                // File already exists - show alert
+                pendingMoveItem = item
+                showDuplicateAlert = true
+            } else {
+                print("Error moving to other pane: \(error)")
+            }
             isMovingCurrentMedia = false
         }
     }
