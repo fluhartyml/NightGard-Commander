@@ -197,10 +197,8 @@ struct FileBrowserPanel: View {
                     .help("Go up one folder")
                 }
 
-                Text(fileSystem.currentPath)
+                TickerText(text: fileSystem.currentPath)
                     .font(.system(.caption, design: .monospaced))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
                     .foregroundColor(.secondary)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
@@ -236,8 +234,8 @@ struct FileBrowserPanel: View {
                     }
                 }
             } else {
-                List(selection: $selectedItems) {
-                    // Inline new item creation
+                VStack(spacing: 0) {
+                    // Inline new item creation row (above table)
                     if isCreatingNewFolder || isCreatingNewFile {
                         HStack(spacing: 8) {
                             Image(systemName: isCreatingNewFolder ? "folder.fill" : "doc.fill")
@@ -258,168 +256,144 @@ struct FileBrowserPanel: View {
                                     isNewItemFocused = true
                                 }
                         }
-                        .padding(.vertical, 4)
+                        .padding(8)
+                        .background(Color.secondary.opacity(0.1))
                     }
 
-                    // Regular file list
-                    ForEach(displayedFiles) { item in
-                        let icon = iconForFile(item)
-                        HStack(spacing: 8) {
-                            Image(systemName: icon.name)
-                                .foregroundColor(icon.color)
-                                .frame(width: 20)
+                    // Table with resizable columns
+                    Table(displayedFiles, selection: $selectedItems) {
+                        TableColumn("Name") { item in
+                            let icon = iconForFile(item)
+                            HStack(spacing: 8) {
+                                Image(systemName: icon.name)
+                                    .foregroundColor(icon.color)
+                                    .frame(width: 20)
 
-                            if renamingItem?.id == item.id {
-                                TextField("Name", text: $renameText)
-                                    .textFieldStyle(.plain)
-                                    .focused($isRenameFocused)
-                                    .onSubmit {
-                                        commitRename(item: item)
-                                    }
-                                    .onKeyPress(.escape) {
-                                        cancelRename()
-                                        return .handled
-                                    }
-                                    .onAppear {
-                                        isRenameFocused = true
-                                    }
-                            } else {
-                                Text(item.name)
-                                    .lineLimit(1)
+                                if renamingItem?.id == item.id {
+                                    TextField("Name", text: $renameText)
+                                        .textFieldStyle(.plain)
+                                        .focused($isRenameFocused)
+                                        .onSubmit {
+                                            commitRename(item: item)
+                                        }
+                                        .onKeyPress(.escape) {
+                                            cancelRename()
+                                            return .handled
+                                        }
+                                        .onAppear {
+                                            isRenameFocused = true
+                                        }
+                                } else {
+                                    Text(item.name)
+                                        .lineLimit(1)
+                                }
                             }
+                            .contentShape(Rectangle())
+                            .onTapGesture(count: 2) {
+                                onItemDoubleClick(item)
+                            }
+                        }
+                        .width(min: 150, ideal: 300, max: nil)
 
-                            Spacer()
-
+                        TableColumn("Size") { item in
                             if renamingItem?.id != item.id {
                                 Text(item.displaySize)
                                     .font(.caption)
                                     .foregroundColor(.secondary)
-                                    .frame(width: 60, alignment: .trailing)
+                            }
+                        }
+                        .width(min: 60, ideal: 80, max: 120)
 
+                        TableColumn("Date Modified") { item in
+                            if renamingItem?.id != item.id {
                                 Text(item.displayDate)
                                     .font(.caption)
                                     .foregroundColor(.secondary)
-                                    .frame(width: 120, alignment: .trailing)
                             }
                         }
-                        .contentShape(Rectangle()) // Makes entire row clickable
-                        .tag(item.id)
-                        .onTapGesture(count: 2) {
-                            // Double tap - open/navigate
-                            onItemDoubleClick(item)
-                        }
-                        .simultaneousGesture(
-                            TapGesture()
-                                .modifiers(.command)
-                                .onEnded {
-                                    // Command+Click - toggle selection
-                                    if selectedItems.contains(item.id) {
-                                        selectedItems.remove(item.id)
-                                    } else {
-                                        selectedItems.insert(item.id)
-                                        lastSelectedItem = item
-                                    }
-                                    onItemSelect(item)
-                                    onFocus()
-                                }
-                        )
-                        .simultaneousGesture(
-                            TapGesture()
-                                .modifiers(.shift)
-                                .onEnded {
-                                    // Shift+Click - range selection
-                                    selectRange(to: item)
-                                    onFocus()
-                                }
-                        )
-                        .contextMenu {
-                            if selectedItems.count > 1 {
-                                Button("Open") {
-                                    // Open first selected item
-                                    if let firstItem = fileSystem.files.first(where: { selectedItems.contains($0.id) }) {
-                                        onItemDoubleClick(firstItem)
-                                    }
-                                }
-                                Divider()
-                                Button("Copy \(selectedItems.count) Items to Other Pane") {
-                                    copySelectedToOtherPane()
-                                }
-                                Button("Move \(selectedItems.count) Items to Other Pane") {
-                                    moveSelectedToOtherPane()
-                                }
-                                Divider()
-                                Button("Delete \(selectedItems.count) Items") {
-                                    deleteSelectedItems()
-                                }
-
-                                // Add to playlist if any selected items are media files
-                                let selectedFiles = fileSystem.files.filter { selectedItems.contains($0.id) }
-                                let hasMedia = selectedFiles.contains { isMediaFile($0) }
-                                if hasMedia, let addAction = onAddToPlaylist {
-                                    Divider()
-                                    Button("Add \(selectedItems.count) Items to Playlist") {
-                                        addSelectedToPlaylist()
-                                    }
-                                }
-
-                                // Scan for media if all selected items are directories
-                                let allFolders = selectedFiles.allSatisfy { $0.isDirectory }
-                                if allFolders {
-                                    Divider()
-                                    Button("Scan \(selectedItems.count) Folders for Media...") {
-                                        scanSelectedFolders()
-                                    }
-                                }
-                            } else {
-                                Button("Rename") {
-                                    startRenaming(item: item)
-                                }
-                                Divider()
-                                Button("Copy to Other Pane") {
-                                    copyToOtherPane(item: item)
-                                }
-                                Button("Move to Other Pane") {
-                                    moveToOtherPane(item: item)
-                                }
-                                Divider()
-                                Button("Delete") {
-                                    deleteItem(item: item)
-                                }
-
-                                // Scan for media (directories only)
-                                if item.isDirectory {
-                                    Divider()
-                                    Button("Scan for Media...") {
-                                        folderToScan = item
-                                    }
-                                }
-
-                                // Add to playlist for media files
-                                if isMediaFile(item), let addAction = onAddToPlaylist {
-                                    Divider()
-                                    Button("Add to Playlist") {
-                                        addAction(item)
-                                    }
+                        .width(min: 100, ideal: 140, max: 200)
+                    }
+                    .contextMenu {
+                        if selectedItems.count > 1 {
+                            Button("Open") {
+                                if let firstItem = fileSystem.files.first(where: { selectedItems.contains($0.id) }) {
+                                    onItemDoubleClick(firstItem)
                                 }
                             }
-                        }
-                        .onDrag {
-                            let url = URL(fileURLWithPath: item.path)
-                            let provider = NSItemProvider()
-                            provider.registerObject(item.path as NSString, visibility: .all)
-                            provider.registerObject(url as NSURL, visibility: .all)
-                            return provider
-                        }
-                        .dropDestination(for: String.self) { droppedPaths, location in
-                        // Only allow drop if this is a directory
-                        guard item.isDirectory else { return false }
+                            Divider()
+                            Button("Copy \(selectedItems.count) Items to Other Pane") {
+                                copySelectedToOtherPane()
+                            }
+                            Button("Move \(selectedItems.count) Items to Other Pane") {
+                                moveSelectedToOtherPane()
+                            }
+                            Divider()
+                            Button("Delete \(selectedItems.count) Items") {
+                                deleteSelectedItems()
+                            }
 
+                            let selectedFiles = fileSystem.files.filter { selectedItems.contains($0.id) }
+                            let hasMedia = selectedFiles.contains { isMediaFile($0) }
+                            if hasMedia, let addAction = onAddToPlaylist {
+                                Divider()
+                                Button("Add \(selectedItems.count) Items to Playlist") {
+                                    addSelectedToPlaylist()
+                                }
+                            }
+
+                            let allFolders = selectedFiles.allSatisfy { $0.isDirectory }
+                            if allFolders {
+                                Divider()
+                                Button("Scan \(selectedItems.count) Folders for Media...") {
+                                    scanSelectedFolders()
+                                }
+                            }
+                        } else if let itemID = selectedItems.first,
+                                  let item = fileSystem.files.first(where: { $0.id == itemID }) {
+                            Button("Rename") {
+                                startRenaming(item: item)
+                            }
+                            Divider()
+                            Button("Copy to Other Pane") {
+                                copyToOtherPane(item: item)
+                            }
+                            Button("Move to Other Pane") {
+                                moveToOtherPane(item: item)
+                            }
+                            Divider()
+                            Button("Delete") {
+                                deleteItem(item: item)
+                            }
+
+                            if item.isDirectory {
+                                Divider()
+                                Button("Scan for Media...") {
+                                    folderToScan = item
+                                }
+                            }
+
+                            if isMediaFile(item), let addAction = onAddToPlaylist {
+                                Divider()
+                                Button("Add to Playlist") {
+                                    addAction(item)
+                                }
+                            }
+                        } else {
+                            Button("New Folder") {
+                                startCreatingFolder()
+                            }
+                            Button("New File") {
+                                startCreatingFile()
+                            }
+                        }
+                    }
+                    .dropDestination(for: String.self) { droppedPaths, location in
+                        // Drop onto pane copies to current directory (internal drags)
                         for sourcePath in droppedPaths {
                             do {
                                 let sourceURL = URL(fileURLWithPath: sourcePath)
                                 let fileName = sourceURL.lastPathComponent
-                                let destURL = URL(fileURLWithPath: item.path).appendingPathComponent(fileName)
-                                // Always copy on drag (use Move button ⌘6 for actual moves)
+                                let destURL = URL(fileURLWithPath: fileSystem.currentPath).appendingPathComponent(fileName)
                                 try FileManager.default.copyItem(at: sourceURL, to: destURL)
                             } catch {
                                 print("Error copying file: \(error)")
@@ -428,47 +402,22 @@ struct FileBrowserPanel: View {
                         fileSystem.loadFiles()
                         return true
                     }
-                    }
-                }
-                .listStyle(.plain)
-                .dropDestination(for: String.self) { droppedPaths, location in
-                    // Drop onto pane copies to current directory (internal drags)
-                    for sourcePath in droppedPaths {
-                        do {
-                            let sourceURL = URL(fileURLWithPath: sourcePath)
-                            let fileName = sourceURL.lastPathComponent
-                            let destURL = URL(fileURLWithPath: fileSystem.currentPath).appendingPathComponent(fileName)
-                            try FileManager.default.copyItem(at: sourceURL, to: destURL)
-                        } catch {
-                            print("Error copying file: \(error)")
+                    .onChange(of: selectedItems) { oldValue, newValue in
+                        if let firstID = newValue.first,
+                           let item = fileSystem.files.first(where: { $0.id == firstID }) {
+                            lastSelectedItem = item
+                            onFocus()
+                            onItemSelect(item)
                         }
                     }
-                    fileSystem.loadFiles()
-                    return true
-                }
-                .contextMenu {
-                    Button("New Folder") {
-                        startCreatingFolder()
-                    }
-                    Button("New File") {
-                        startCreatingFile()
-                    }
-                }
-                .onChange(of: selectedItems) { oldValue, newValue in
-                    if let firstID = newValue.first,
-                       let item = fileSystem.files.first(where: { $0.id == firstID }) {
-                        lastSelectedItem = item
-                        onFocus()
-                        onItemSelect(item)
-                    }
-                }
-                .onChange(of: fileSystem.files) { oldValue, newValue in
-                    // Restore selection to the folder we came from
-                    if let lastFolder = fileSystem.lastVisitedFolder,
-                       let item = newValue.first(where: { $0.name == lastFolder }) {
-                        selectedItems = [item.id]
-                        lastSelectedItem = item
-                        fileSystem.lastVisitedFolder = nil // Clear after use
+                    .onChange(of: fileSystem.files) { oldValue, newValue in
+                        // Restore selection to the folder we came from
+                        if let lastFolder = fileSystem.lastVisitedFolder,
+                           let item = newValue.first(where: { $0.name == lastFolder }) {
+                            selectedItems = [item.id]
+                            lastSelectedItem = item
+                            fileSystem.lastVisitedFolder = nil // Clear after use
+                        }
                     }
                 }
             }
@@ -935,5 +884,69 @@ struct FileBrowserPanel: View {
 
         // Check for regular media files
         return ["mp3", "m4a", "wav", "aiff", "aac", "flac", "ogg", "mp4", "mov", "m4v", "avi", "mkv"].contains(ext)
+    }
+}
+
+// MARK: - Ticker Text View
+
+struct TickerText: View {
+    let text: String
+    @State private var offset: CGFloat = 0
+    @State private var textWidth: CGFloat = 0
+    @State private var containerWidth: CGFloat = 0
+
+    var body: some View {
+        GeometryReader { geometry in
+            Text(text)
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+                .offset(x: offset)
+                .background(
+                    GeometryReader { textGeometry in
+                        Color.clear
+                            .onAppear {
+                                textWidth = textGeometry.size.width
+                                containerWidth = geometry.size.width
+                                if textWidth > containerWidth {
+                                    startTicker()
+                                }
+                            }
+                            .onChange(of: text) {
+                                textWidth = textGeometry.size.width
+                                containerWidth = geometry.size.width
+                                offset = 0
+                                if textWidth > containerWidth {
+                                    startTicker()
+                                }
+                            }
+                    }
+                )
+        }
+        .clipped()
+    }
+
+    private func startTicker() {
+        // Wait 2 seconds, then scroll to end, wait 2 seconds, scroll back, repeat
+        let scrollDistance = textWidth - containerWidth + 20 // Extra padding
+
+        withAnimation(.linear(duration: 0)) {
+            offset = 0
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+            withAnimation(.linear(duration: Double(scrollDistance / 30))) { // 30 pixels per second
+                offset = -scrollDistance
+            }
+
+            DispatchQueue.main.asyncAfter(deadline: .now() + Double(scrollDistance / 30) + 2.0) {
+                withAnimation(.linear(duration: Double(scrollDistance / 30))) {
+                    offset = 0
+                }
+
+                DispatchQueue.main.asyncAfter(deadline: .now() + Double(scrollDistance / 30) + 2.0) {
+                    startTicker() // Loop
+                }
+            }
+        }
     }
 }

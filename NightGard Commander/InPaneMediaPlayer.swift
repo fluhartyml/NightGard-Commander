@@ -93,13 +93,43 @@ struct InPaneMediaPlayer: View {
                 }
 
                 if isWebloc {
-                    // Webloc files - show streaming label instead of playback controls
-                    HStack {
-                        Image(systemName: "globe")
-                            .foregroundColor(.secondary)
-                        Text("Streaming from Apple Music")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
+                    // Apple Music playback controls
+                    HStack(spacing: 12) {
+                        Button(action: {
+                            Task {
+                                let musicPlayer = ApplicationMusicPlayer.shared
+                                do {
+                                    try await musicPlayer.skipToPreviousEntry()
+                                } catch {
+                                    print("Error skipping to previous: \(error)")
+                                }
+                            }
+                        }) {
+                            Image(systemName: "backward.end.fill")
+                                .font(.caption)
+                        }
+                        .buttonStyle(.borderless)
+
+                        Button(action: togglePlayPause) {
+                            Image(systemName: isPlaying ? "pause.circle.fill" : "play.circle.fill")
+                                .font(.title3)
+                        }
+                        .buttonStyle(.borderless)
+
+                        Button(action: {
+                            Task {
+                                let musicPlayer = ApplicationMusicPlayer.shared
+                                do {
+                                    try await musicPlayer.skipToNextEntry()
+                                } catch {
+                                    print("Error skipping to next: \(error)")
+                                }
+                            }
+                        }) {
+                            Image(systemName: "forward.end.fill")
+                                .font(.caption)
+                        }
+                        .buttonStyle(.borderless)
                     }
                     .padding(.vertical, 8)
                 } else {
@@ -298,9 +328,21 @@ struct InPaneMediaPlayer: View {
             default:
                 print("Unknown Apple Music type: \(type)")
             }
-            isPlaying = true
+
+            // Force UI update and verify playback started
+            await MainActor.run {
+                self.isPlaying = true
+            }
+
+            // Monitor player state
+            let musicPlayer = ApplicationMusicPlayer.shared
+            print("MusicKit player state: \(musicPlayer.state)")
+
         } catch {
             print("Error playing Apple Music content: \(error)")
+            await MainActor.run {
+                self.isPlaying = false
+            }
         }
     }
 
