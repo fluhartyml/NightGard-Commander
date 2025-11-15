@@ -40,6 +40,7 @@ struct FileBrowserPanel: View {
     @State private var isMovingCurrentMedia = false
     @State private var showDuplicateAlert = false
     @State private var pendingMoveItem: FileItem?
+    @State private var showTradingCardCreator = false
     @FocusState private var isNewItemFocused: Bool
     @FocusState private var isRenameFocused: Bool
 
@@ -168,6 +169,17 @@ struct FileBrowserPanel: View {
                 .buttonStyle(.borderless)
                 .frame(width: 30)
                 .help(showPlaylistsOnly ? "Show All Files" : "Show Playlists Only (\(playlistCount))")
+
+                // Trading card creator button
+                Button(action: {
+                    showTradingCardCreator = true
+                }) {
+                    Image(systemName: "square.and.arrow.down.on.square")
+                        .foregroundColor(.secondary)
+                }
+                .buttonStyle(.borderless)
+                .frame(width: 30)
+                .help("Create Apple Music Link File")
 
                 if fileSystem.canNavigateUp() {
                     Button(action: {
@@ -570,6 +582,15 @@ struct FileBrowserPanel: View {
                 isPresented: $showMultiFolderScan
             )
         }
+        .sheet(isPresented: $showTradingCardCreator) {
+            TradingCardCreatorDialog(
+                isPresented: $showTradingCardCreator,
+                currentPath: fileSystem.currentPath,
+                onRefresh: {
+                    fileSystem.loadFiles()
+                }
+            )
+        }
         .alert("File Already Exists", isPresented: $showDuplicateAlert) {
             Button("Replace", role: .destructive) {
                 if let item = pendingMoveItem {
@@ -599,10 +620,19 @@ struct FileBrowserPanel: View {
             return ("folder.fill", .blue)
         }
 
+        let filename = item.name.lowercased()
         let ext = (item.name as NSString).pathExtension.lowercased()
 
+        // Apple Music video link (.video.webloc) - lime green tribute to LimeWire
+        if filename.hasSuffix(".video.webloc") {
+            return ("video.fill", Color(red: 0.5, green: 1.0, blue: 0.0))
+        }
+        // Apple Music audio link (.media.webloc) - lime green tribute to LimeWire
+        else if filename.hasSuffix(".media.webloc") {
+            return ("music.note", Color(red: 0.5, green: 1.0, blue: 0.0))
+        }
         // Audio files
-        if ["mp3", "m4a", "wav", "aiff", "aac", "flac", "ogg"].contains(ext) {
+        else if ["mp3", "m4a", "wav", "aiff", "aac", "flac", "ogg"].contains(ext) {
             return ("music.note", Color(red: 0.85, green: 0.75, blue: 0.20))
         }
         // Video files
@@ -826,7 +856,15 @@ struct FileBrowserPanel: View {
 
     private func isMediaFile(_ item: FileItem) -> Bool {
         guard !item.isDirectory else { return false }
+        let filename = item.name.lowercased()
         let ext = (item.name as NSString).pathExtension.lowercased()
+
+        // Check for webloc files (Apple Music links)
+        if filename.hasSuffix(".media.webloc") || filename.hasSuffix(".video.webloc") {
+            return true
+        }
+
+        // Check for regular media files
         return ["mp3", "m4a", "wav", "aiff", "aac", "flac", "ogg", "mp4", "mov", "m4v", "avi", "mkv"].contains(ext)
     }
 }

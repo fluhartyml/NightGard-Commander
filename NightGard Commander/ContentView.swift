@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import AppKit
 
 enum FocusedPane {
     case left, right
@@ -78,9 +79,13 @@ struct ContentView: View {
 
     func getFileType(for item: FileItem) -> FileType {
         guard !item.isDirectory else { return .folder }
+        let filename = item.name.lowercased()
         let ext = (item.name as NSString).pathExtension.lowercased()
 
-        if ["txt", "md", "rb", "json", "swift", "log", "xml", "yaml", "yml"].contains(ext) {
+        // Check for any webloc files (Safari bookmarks, Apple Music links, etc.)
+        if ext == "webloc" {
+            return .webloc
+        } else if ["txt", "md", "rb", "json", "swift", "log", "xml", "yaml", "yml"].contains(ext) {
             return .text
         } else if ["mp3", "m4a", "wav", "aiff", "aac", "flac", "ogg"].contains(ext) {
             return .audio
@@ -114,6 +119,10 @@ struct ContentView: View {
             startPlayingMedia(item: item)
         case .image:
             showImagePreview = true
+        case .webloc:
+            // Open webloc file with system default handler (Apple Music app)
+            let url = URL(fileURLWithPath: item.path)
+            NSWorkspace.shared.open(url)
         case .other:
             break // Do nothing for unknown file types
         }
@@ -545,7 +554,7 @@ struct ContentView: View {
 
 
 enum FileType {
-    case folder, text, audio, video, image, other
+    case folder, text, audio, video, image, webloc, other
 }
 
 #Preview {

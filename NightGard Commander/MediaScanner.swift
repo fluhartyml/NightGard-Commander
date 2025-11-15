@@ -84,8 +84,12 @@ class MediaScanner {
             lastPath = fileURL.path
 
             // Check if it's a media file
+            let filename = fileURL.lastPathComponent.lowercased()
             let ext = fileURL.pathExtension.lowercased()
-            if allMediaExtensions.contains(ext) {
+
+            // Check for webloc files (Apple Music links) or regular media
+            let isWebloc = filename.hasSuffix(".media.webloc") || filename.hasSuffix(".video.webloc")
+            if allMediaExtensions.contains(ext) || isWebloc {
                 mediaFilesFound += 1
                 // Get file size
                 let fileSize = (try? fileURL.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
