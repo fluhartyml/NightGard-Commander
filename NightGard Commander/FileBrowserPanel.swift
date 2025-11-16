@@ -38,6 +38,8 @@ struct FileBrowserPanel: View {
     @State private var selectedFoldersForScan: [FileItem] = []
     @State private var showPlaylistsOnly = false
     @State private var isMovingCurrentMedia = false
+    @State private var expandedFolders: Set<String> = []  // Track which folders are expanded
+    @State private var folderChildren: [String: [FileItem]] = [:]  // Cache loaded children
     @State private var showDuplicateAlert = false
     @State private var pendingMoveItem: FileItem?
     @State private var showTradingCardCreator = false
@@ -293,7 +295,7 @@ struct FileBrowserPanel: View {
                                 onItemDoubleClick(item)
                             }
                         }
-                        .width(min: 150, ideal: 300, max: nil)
+                        .width(min: 100, max: 500)
 
                         TableColumn("Size") { item in
                             if renamingItem?.id != item.id {
@@ -302,7 +304,7 @@ struct FileBrowserPanel: View {
                                     .foregroundColor(.secondary)
                             }
                         }
-                        .width(min: 60, ideal: 80, max: 120)
+                        .width(ideal: 70)
 
                         TableColumn("Date Modified") { item in
                             if renamingItem?.id != item.id {
@@ -311,7 +313,7 @@ struct FileBrowserPanel: View {
                                     .foregroundColor(.secondary)
                             }
                         }
-                        .width(min: 100, ideal: 140, max: 200)
+                        .width(ideal: 130)
                     }
                     .contextMenu {
                         if selectedItems.count > 1 {

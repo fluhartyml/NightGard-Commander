@@ -12,6 +12,10 @@ enum FocusedPane {
     case left, right
 }
 
+enum PaneMode {
+    case files, playlist, metadata
+}
+
 struct ContentView: View {
     @State private var leftFileSystem = FileSystemService()
     @State private var rightFileSystem = FileSystemService()
@@ -27,8 +31,8 @@ struct ContentView: View {
     @State private var showImagePreview = false
     @State private var showMetadataEditor = false
     @State private var previewItem: FileItem?
-    @State private var showPlaylistInLeftPane = false
-    @State private var showPlaylistInRightPane = false
+    @State private var leftPaneMode: PaneMode = .files
+    @State private var rightPaneMode: PaneMode = .files
 
     // Left pane media player state
     @State private var leftCurrentMedia: FileItem?
@@ -51,7 +55,7 @@ struct ContentView: View {
     }
 
     var isPlaylistMode: Bool {
-        (focusedPane == .left && showPlaylistInLeftPane) || (focusedPane == .right && showPlaylistInRightPane)
+        (focusedPane == .left && leftPaneMode == .playlist) || (focusedPane == .right && rightPaneMode == .playlist)
     }
 
     var copyTooltip: String {
@@ -171,7 +175,8 @@ struct ContentView: View {
     }
 
     func toggleLeftPane() {
-        if !showPlaylistInLeftPane {
+        switch leftPaneMode {
+        case .files:
             // Switching FROM files TO playlist - populate with media files
             leftPlaylistManager.clear()
             let mediaFiles = leftFileSystem.files.filter { file in
@@ -181,12 +186,17 @@ struct ContentView: View {
             for file in mediaFiles {
                 leftPlaylistManager.addItem(file)
             }
+            leftPaneMode = .playlist
+        case .playlist:
+            leftPaneMode = .metadata
+        case .metadata:
+            leftPaneMode = .files
         }
-        showPlaylistInLeftPane.toggle()
     }
 
     func toggleRightPane() {
-        if !showPlaylistInRightPane {
+        switch rightPaneMode {
+        case .files:
             // Switching FROM files TO playlist - populate with media files
             rightPlaylistManager.clear()
             let mediaFiles = rightFileSystem.files.filter { file in
@@ -196,8 +206,12 @@ struct ContentView: View {
             for file in mediaFiles {
                 rightPlaylistManager.addItem(file)
             }
+            rightPaneMode = .playlist
+        case .playlist:
+            rightPaneMode = .metadata
+        case .metadata:
+            rightPaneMode = .files
         }
-        showPlaylistInRightPane.toggle()
     }
 
     var body: some View {
@@ -207,8 +221,8 @@ struct ContentView: View {
                 // Left pane toggle
                 Button(action: { toggleLeftPane() }) {
                     HStack(spacing: 4) {
-                        Image(systemName: showPlaylistInLeftPane ? "folder.fill" : "music.note.list")
-                        Text(showPlaylistInLeftPane ? "Left: Files" : "Left: Playlist")
+                        Image(systemName: leftPaneMode == .files ? "music.note.list" : (leftPaneMode == .playlist ? "info.circle" : "folder.fill"))
+                        Text("Left: \(leftPaneMode == .files ? "Playlist" : (leftPaneMode == .playlist ? "Metadata" : "Files"))")
                             .font(.caption)
                     }
                 }
@@ -220,8 +234,8 @@ struct ContentView: View {
                 // Right pane toggle
                 Button(action: { toggleRightPane() }) {
                     HStack(spacing: 4) {
-                        Image(systemName: showPlaylistInRightPane ? "folder.fill" : "music.note.list")
-                        Text(showPlaylistInRightPane ? "Right: Files" : "Right: Playlist")
+                        Image(systemName: rightPaneMode == .files ? "music.note.list" : (rightPaneMode == .playlist ? "info.circle" : "folder.fill"))
+                        Text("Right: \(rightPaneMode == .files ? "Playlist" : (rightPaneMode == .playlist ? "Metadata" : "Files"))")
                             .font(.caption)
                     }
                 }
@@ -234,8 +248,9 @@ struct ContentView: View {
 
             // Dual-pane layout
             HStack(spacing: 0) {
-                // Left pane - either file browser or playlist
-                if showPlaylistInLeftPane {
+                // Left pane - file browser, playlist, or metadata
+                switch leftPaneMode {
+                case .playlist:
                     PlaylistPanel(
                         playlistManager: leftPlaylistManager,
                         isFocused: focusedPane == .left,
@@ -244,7 +259,14 @@ struct ContentView: View {
                             selectedLeftItem = item
                         }
                     )
-                } else {
+                case .metadata:
+                    // Metadata editor showing info for selected file in RIGHT pane
+                    MetadataEditorPanel(
+                        selectedFile: selectedRightItem,
+                        isFocused: focusedPane == .left,
+                        onFocus: { focusedPane = .left }
+                    )
+                case .files:
                     FileBrowserPanel(
                         fileSystem: leftFileSystem,
                         serverManager: serverManager,
@@ -281,8 +303,9 @@ struct ContentView: View {
 
                 Divider()
 
-                // Right pane - either file browser or playlist
-                if showPlaylistInRightPane {
+                // Right pane - file browser, playlist, or metadata
+                switch rightPaneMode {
+                case .playlist:
                     PlaylistPanel(
                         playlistManager: rightPlaylistManager,
                         isFocused: focusedPane == .right,
@@ -291,7 +314,14 @@ struct ContentView: View {
                             selectedRightItem = item
                         }
                     )
-                } else {
+                case .metadata:
+                    // Metadata editor showing info for selected file in LEFT pane
+                    MetadataEditorPanel(
+                        selectedFile: selectedLeftItem,
+                        isFocused: focusedPane == .right,
+                        onFocus: { focusedPane = .right }
+                    )
+                case .files:
                     FileBrowserPanel(
                         fileSystem: rightFileSystem,
                         serverManager: serverManager,

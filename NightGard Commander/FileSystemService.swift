@@ -67,6 +67,42 @@ class FileSystemService {
         return breadcrumbs
     }
 
+    func loadChildren(for folderPath: String) -> [FileItem] {
+        do {
+            let url = URL(fileURLWithPath: folderPath)
+            let contents = try fileManager.contentsOfDirectory(
+                at: url,
+                includingPropertiesForKeys: [.isDirectoryKey, .fileSizeKey, .contentModificationDateKey, .creationDateKey, .isSymbolicLinkKey],
+                options: [.skipsHiddenFiles]
+            )
+
+            return contents.compactMap { url -> FileItem? in
+                guard let resourceValues = try? url.resourceValues(forKeys: [.isDirectoryKey, .fileSizeKey, .contentModificationDateKey, .creationDateKey, .isSymbolicLinkKey]) else {
+                    return nil
+                }
+
+                var targetIsDir: ObjCBool = false
+                let actualIsDirectory = fileManager.fileExists(atPath: url.path, isDirectory: &targetIsDir) && targetIsDir.boolValue
+
+                return FileItem(
+                    name: url.lastPathComponent,
+                    path: url.path,
+                    isDirectory: actualIsDirectory,
+                    size: resourceValues.fileSize ?? 0,
+                    modificationDate: resourceValues.contentModificationDate ?? Date(),
+                    creationDate: resourceValues.creationDate ?? Date()
+                )
+            }.sorted { item1, item2 in
+                if item1.isDirectory != item2.isDirectory {
+                    return item1.isDirectory
+                }
+                return item1.name.localizedCaseInsensitiveCompare(item2.name) == .orderedAscending
+            }
+        } catch {
+            return []
+        }
+    }
+
     func loadFiles() {
         files = []
         errorMessage = nil
