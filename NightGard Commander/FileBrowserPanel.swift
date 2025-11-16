@@ -421,6 +421,31 @@ struct FileBrowserPanel: View {
                             fileSystem.lastVisitedFolder = nil // Clear after use
                         }
                     }
+                    // DJ CURATION KEYBOARD SHORTCUTS
+                    .onKeyPress(.init("m")) {
+                        // M = Move selected file to other pane + play next
+                        if let firstID = selectedItems.first,
+                           let item = fileSystem.files.first(where: { $0.id == firstID }) {
+                            moveToOtherPane(item: item)
+                        }
+                        return .handled
+                    }
+                    .onKeyPress(.rightArrow) {
+                        // → = Play next track
+                        playNextTrack()
+                        return .handled
+                    }
+                    .onKeyPress(.space) {
+                        // Space = Play/Pause
+                        if let media = currentMedia {
+                            // Toggle play state
+                            showMediaPlayer.toggle()
+                        } else {
+                            // No media playing - play first track
+                            playNextTrack()
+                        }
+                        return .handled
+                    }
                 }
             }
 
@@ -771,8 +796,28 @@ struct FileBrowserPanel: View {
                 }
             }
 
+            // DJ CURATION: Check if we're moving the currently playing file
+            let wasPlayingThis = (currentMedia?.path == item.path)
+
+            // Stop playback before moving to prevent errors
+            if wasPlayingThis {
+                currentMedia = nil
+                showMediaPlayer = false
+            }
+
             try fileManager.moveItem(at: sourceURL, to: destURL)
+
             fileSystem.loadFiles()
+            onRefreshOtherPane()
+
+            // Auto-play next track after move
+            if wasPlayingThis {
+                // Give the file system a moment to update, then play next
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                    playNextTrack()
+                }
+            }
+
         } catch let error as NSError {
             // Check if error is due to duplicate file
             if error.domain == NSCocoaErrorDomain && error.code == 516 {
@@ -784,6 +829,23 @@ struct FileBrowserPanel: View {
             }
             isMovingCurrentMedia = false
         }
+    }
+
+    // Play next track in the current folder
+    private func playNextTrack() {
+        let mediaFiles = fileSystem.files.filter { isMediaFile($0) }
+        guard let firstMedia = mediaFiles.first else {
+            print("No more tracks to play")
+            return
+        }
+
+        // Select and play the next track
+        selectedItems = [firstMedia.id]
+        lastSelectedItem = firstMedia
+        onItemSelect(firstMedia)
+        onItemDoubleClick(firstMedia)
+
+        print("Playing next track: \(firstMedia.name)")
     }
 
     private func copyToOtherPane(item: FileItem) {
@@ -821,10 +883,44 @@ struct FileBrowserPanel: View {
 
     private func moveSelectedToOtherPane() {
         let itemsToMove = fileSystem.files.filter { selectedItems.contains($0.id) }
+
+        // DJ CURATION: Check if we're moving the currently playing file
+        var wasPlayingMovedFile = false
         for item in itemsToMove {
-            moveToOtherPane(item: item)
+            if let media = currentMedia, media.path == item.path {
+                wasPlayingMovedFile = true
+                // Stop playback before moving
+                currentMedia = nil
+                showMediaPlayer = false
+                break
+            }
         }
+
+        // Move all files
+        for item in itemsToMove {
+            // Move without auto-play (we'll handle it once at the end)
+            let fileManager = FileManager.default
+            let sourceURL = URL(fileURLWithPath: item.path)
+            let fileName = sourceURL.lastPathComponent
+            let destURL = URL(fileURLWithPath: otherPanePath).appendingPathComponent(fileName)
+
+            do {
+                try fileManager.moveItem(at: sourceURL, to: destURL)
+            } catch {
+                print("Error moving file: \(error)")
+            }
+        }
+
         selectedItems.removeAll()
+        fileSystem.loadFiles()
+        onRefreshOtherPane()
+
+        // Auto-play next track after moving if we moved the playing file
+        if wasPlayingMovedFile {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                playNextTrack()
+            }
+        }
     }
 
     private func addSelectedToPlaylist() {

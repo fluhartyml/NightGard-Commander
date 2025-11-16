@@ -17,8 +17,12 @@ enum PaneMode {
 }
 
 struct ContentView: View {
-    @State private var leftFileSystem = FileSystemService()
-    @State private var rightFileSystem = FileSystemService()
+    // STATE PERSISTENCE - Remember last directories
+    @AppStorage("leftPanePath") private var savedLeftPath: String = NSHomeDirectory()
+    @AppStorage("rightPanePath") private var savedRightPath: String = NSHomeDirectory()
+
+    @State private var leftFileSystem: FileSystemService
+    @State private var rightFileSystem: FileSystemService
     @State private var serverManager = ServerManager()
     @State private var leftPlaylistManager = PlaylistManager()
     @State private var rightPlaylistManager = PlaylistManager()
@@ -33,6 +37,15 @@ struct ContentView: View {
     @State private var previewItem: FileItem?
     @State private var leftPaneMode: PaneMode = .files
     @State private var rightPaneMode: PaneMode = .files
+
+    init() {
+        // Initialize FileSystemServices with saved paths
+        let leftPath = UserDefaults.standard.string(forKey: "leftPanePath") ?? NSHomeDirectory()
+        let rightPath = UserDefaults.standard.string(forKey: "rightPanePath") ?? NSHomeDirectory()
+
+        _leftFileSystem = State(initialValue: FileSystemService(startPath: leftPath))
+        _rightFileSystem = State(initialValue: FileSystemService(startPath: rightPath))
+    }
 
     // Left pane media player state
     @State private var leftCurrentMedia: FileItem?
@@ -460,6 +473,13 @@ struct ContentView: View {
                 )
             }
         }
+        // STATE PERSISTENCE - Save paths whenever they change
+        .onChange(of: leftFileSystem.currentPath) { oldValue, newValue in
+            savedLeftPath = newValue
+        }
+        .onChange(of: rightFileSystem.currentPath) { oldValue, newValue in
+            savedRightPath = newValue
+        }
     }
 
     private func deleteSelectedItem() {
@@ -553,7 +573,24 @@ struct ContentView: View {
 
         let destinationPath = focusedPane == .left ? rightFileSystem.currentPath : leftFileSystem.currentPath
 
+        // DJ CURATION: Check if we're moving the currently playing file
+        let currentMedia = focusedPane == .left ? leftCurrentMedia : rightCurrentMedia
+        var wasPlayingMovedFile = false
+
         for item in sourceFiles {
+            // Check if this item is currently playing
+            if let media = currentMedia, media.path == item.path {
+                wasPlayingMovedFile = true
+                // Stop playback before moving
+                if focusedPane == .left {
+                    leftCurrentMedia = nil
+                    showLeftMediaPlayer = false
+                } else {
+                    rightCurrentMedia = nil
+                    showRightMediaPlayer = false
+                }
+            }
+
             do {
                 let sourceURL = URL(fileURLWithPath: item.path)
                 let fileName = sourceURL.lastPathComponent
@@ -574,6 +611,37 @@ struct ContentView: View {
         }
         leftFileSystem.loadFiles()
         rightFileSystem.loadFiles()
+
+        // DJ CURATION: Auto-play next track after move
+        if wasPlayingMovedFile {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                playNextTrackInFocusedPane()
+            }
+        }
+    }
+
+    private func playNextTrackInFocusedPane() {
+        let mediaFiles = activeFocusedFileSystem.files.filter { file in
+            let type = getFileType(for: file)
+            return type == .audio || type == .video
+        }
+
+        guard let firstMedia = mediaFiles.first else {
+            print("No more tracks to play")
+            return
+        }
+
+        // Select and play the next track
+        if focusedPane == .left {
+            selectedLeftItem = firstMedia
+            selectedLeftItems = [firstMedia.id]
+        } else {
+            selectedRightItem = firstMedia
+            selectedRightItems = [firstMedia.id]
+        }
+
+        handleDoubleClick(item: firstMedia)
+        print("Playing next track: \(firstMedia.name)")
     }
 
     private func createNewFolder() {

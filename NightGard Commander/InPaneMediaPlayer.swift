@@ -520,14 +520,7 @@ struct AppleMusicPlayerView: View {
             }
         }
         .onAppear {
-            // Load initial track
-            Task { @MainActor in
-                if let entry = player.queue.currentEntry,
-                   let song = entry.item as? Song {
-                    self.currentSong = song
-                    self.artwork = song.artwork
-                }
-            }
+            // MusicKit player state is monitored via onChange above
         }
     }
 }
