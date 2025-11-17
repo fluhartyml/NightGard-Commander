@@ -508,7 +508,7 @@ struct FileBrowserPanel: View {
                     .onKeyPress(.downArrow) {
                         if nuclearModeEnabled {
                             // ↓ = Next track + auto-play (nuclear mode)
-                            playNextTrack()
+                            advanceToNextTrack()
                         }
                         return .handled
                     }
@@ -980,6 +980,44 @@ struct FileBrowserPanel: View {
         }
 
         // Select and play the track with slight delay to let file list update
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            self.selectedItems = [track.id]
+            self.lastSelectedItem = track
+            self.onItemSelect(track)
+            self.onItemDoubleClick(track)
+        }
+    }
+
+    // Advance to next track in the current folder (nuclear mode)
+    private func advanceToNextTrack() {
+        let mediaFiles = fileSystem.files.filter { isMediaFile($0) }
+        guard !mediaFiles.isEmpty else {
+            print("No tracks to play")
+            return
+        }
+
+        // Find currently playing track
+        var trackToPlay: FileItem? = nil
+        if let current = currentMedia,
+           let currentIndex = mediaFiles.firstIndex(where: { $0.path == current.path }) {
+            // Go to next track
+            let nextIndex = currentIndex + 1
+            if nextIndex < mediaFiles.count {
+                trackToPlay = mediaFiles[nextIndex]
+                print("Playing next track: \(trackToPlay!.name)")
+            } else {
+                print("Already at last track")
+                return
+            }
+        } else {
+            // No current track - play first track
+            trackToPlay = mediaFiles.first
+            print("Playing first track: \(trackToPlay!.name)")
+        }
+
+        guard let track = trackToPlay else { return }
+
+        // Select and play
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
             self.selectedItems = [track.id]
             self.lastSelectedItem = track
