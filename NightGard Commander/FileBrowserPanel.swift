@@ -46,6 +46,11 @@ struct FileBrowserPanel: View {
     @FocusState private var isNewItemFocused: Bool
     @FocusState private var isRenameFocused: Bool
 
+    // Nuclear mode state
+    @State private var nuclearModeEnabled = false
+    @State private var showNuclearToast = false
+    @State private var nuclearToastMessage = ""
+
     let playlistManager: PlaylistManager?
 
     // Filter files to show only playlists if enabled
@@ -206,6 +211,51 @@ struct FileBrowserPanel: View {
                     .padding(.vertical, 4)
 
                 Spacer()
+
+                // Nuclear mode compass rose
+                ZStack {
+                    // Center - Nuclear glyph (clickable toggle)
+                    Button(action: {
+                        nuclearModeEnabled.toggle()
+                        nuclearToastMessage = nuclearModeEnabled ? "Nuclear Mode ON" : "Nuclear Mode OFF"
+                        showNuclearToast = true
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                            showNuclearToast = false
+                        }
+                    }) {
+                        Text("☢️")
+                            .font(.system(size: 20))
+                            .opacity(nuclearModeEnabled ? 1.0 : 0.3)
+                    }
+                    .buttonStyle(.borderless)
+                    .help(nuclearModeEnabled ? "Nuclear Mode: ON (← copy, → move, ↑ prev, ↓ next)" : "Nuclear Mode: OFF (tap to enable)")
+
+                    // North - Up arrow (previous)
+                    Text("↑")
+                        .font(.system(size: 10))
+                        .foregroundColor(nuclearModeEnabled ? .yellow : .clear)
+                        .offset(x: 0, y: -15)
+
+                    // South - Down arrow (next)
+                    Text("↓")
+                        .font(.system(size: 10))
+                        .foregroundColor(nuclearModeEnabled ? .yellow : .clear)
+                        .offset(x: 0, y: 15)
+
+                    // East - Right arrow (move)
+                    Text("→")
+                        .font(.system(size: 10))
+                        .foregroundColor(nuclearModeEnabled ? .yellow : .clear)
+                        .offset(x: 15, y: 0)
+
+                    // West - Left arrow (copy)
+                    Text("←")
+                        .font(.system(size: 10))
+                        .foregroundColor(nuclearModeEnabled ? .yellow : .clear)
+                        .offset(x: -15, y: 0)
+                }
+                .frame(width: 40, height: 40)
+                .padding(.trailing, 8)
             }
             .frame(height: 32)
             .background(Color.secondary.opacity(0.1))
@@ -430,9 +480,36 @@ struct FileBrowserPanel: View {
                         }
                         return .handled
                     }
+                    // NUCLEAR MODE ARROW KEYS
+                    .onKeyPress(.leftArrow) {
+                        if nuclearModeEnabled {
+                            // ← = Copy to other pane (nuclear mode)
+                            nuclearModeCopy()
+                        }
+                        return .handled
+                    }
                     .onKeyPress(.rightArrow) {
-                        // → = Play next track
-                        playNextTrack()
+                        if nuclearModeEnabled {
+                            // → = Move to other pane + auto-play next (nuclear mode)
+                            nuclearModeMove()
+                        } else {
+                            // → = Play next track (normal mode)
+                            playNextTrack()
+                        }
+                        return .handled
+                    }
+                    .onKeyPress(.upArrow) {
+                        if nuclearModeEnabled {
+                            // ↑ = Previous track + auto-play (nuclear mode)
+                            playPreviousTrack()
+                        }
+                        return .handled
+                    }
+                    .onKeyPress(.downArrow) {
+                        if nuclearModeEnabled {
+                            // ↓ = Next track + auto-play (nuclear mode)
+                            playNextTrack()
+                        }
                         return .handled
                     }
                     .onKeyPress(.space) {
@@ -464,6 +541,16 @@ struct FileBrowserPanel: View {
 
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 4) {
+                    // File count
+                    Text("\(displayedFiles.count) items")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .padding(.trailing, 8)
+
+                    Text("›")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+
                     ForEach(Array(fileSystem.breadcrumbs.enumerated()), id: \.element.id) { index, breadcrumb in
                         Button(action: {
                             fileSystem.navigateToFolder(breadcrumb.path)
@@ -615,6 +702,21 @@ struct FileBrowserPanel: View {
                 Text("A file named \"\(item.name)\" already exists in the destination. Do you want to replace it or keep both?")
             }
         }
+        .overlay(alignment: .top) {
+            if showNuclearToast {
+                Text(nuclearToastMessage)
+                    .font(.headline)
+                    .foregroundColor(.white)
+                    .padding()
+                    .background(
+                        RoundedRectangle(cornerRadius: 10)
+                            .fill(Color.black.opacity(0.8))
+                    )
+                    .padding(.top, 50)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            }
+        }
+        .animation(.easeInOut, value: showNuclearToast)
     }
 
     private func iconForFile(_ item: FileItem) -> (name: String, color: Color) {
@@ -789,15 +891,35 @@ struct FileBrowserPanel: View {
                 let ext = (fileName as NSString).pathExtension
                 var counter = 2
 
-                while fileManager.fileExists(atPath: destURL.path) {
+                // SAFETY: Prevent infinite loop with max 1000 attempts
+                while fileManager.fileExists(atPath: destURL.path) && counter < 1000 {
                     let newName = ext.isEmpty ? "\(nameWithoutExt)-\(counter)" : "\(nameWithoutExt)-\(counter).\(ext)"
                     destURL = URL(fileURLWithPath: otherPanePath).appendingPathComponent(newName)
                     counter += 1
+                }
+
+                // If we hit the limit, bail out with error
+                if counter >= 1000 {
+                    throw NSError(domain: "FileBrowserPanel", code: 999, userInfo: [
+                        NSLocalizedDescriptionKey: "Too many duplicate files - unable to find unique name"
+                    ])
                 }
             }
 
             // DJ CURATION: Check if we're moving the currently playing file
             let wasPlayingThis = (currentMedia?.path == item.path)
+
+            // Before moving, capture what the next track should be
+            var nextTrackName: String? = nil
+            if wasPlayingThis {
+                let mediaFiles = fileSystem.files.filter { isMediaFile($0) }
+                if let currentIndex = mediaFiles.firstIndex(where: { $0.path == item.path }) {
+                    let nextIndex = currentIndex + 1
+                    if nextIndex < mediaFiles.count {
+                        nextTrackName = mediaFiles[nextIndex].name
+                    }
+                }
+            }
 
             // Stop playback before moving to prevent errors
             if wasPlayingThis {
@@ -814,7 +936,7 @@ struct FileBrowserPanel: View {
             if wasPlayingThis {
                 // Give the file system a moment to update, then play next
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                    playNextTrack()
+                    playNextTrack(preferredTrackName: nextTrackName)
                 }
             }
 
@@ -832,20 +954,97 @@ struct FileBrowserPanel: View {
     }
 
     // Play next track in the current folder
-    private func playNextTrack() {
+    private func playNextTrack(preferredTrackName: String? = nil) {
         let mediaFiles = fileSystem.files.filter { isMediaFile($0) }
-        guard let firstMedia = mediaFiles.first else {
+
+        // Try to find the preferred track first (the one that was next before the move)
+        var trackToPlay: FileItem? = nil
+        if let preferredName = preferredTrackName {
+            trackToPlay = mediaFiles.first { $0.name == preferredName }
+            if trackToPlay != nil {
+                print("Playing preferred next track: \(preferredName)")
+            }
+        }
+
+        // If no preferred track or it wasn't found, play the first available
+        if trackToPlay == nil {
+            trackToPlay = mediaFiles.first
+            if let first = trackToPlay {
+                print("Playing first available track: \(first.name)")
+            }
+        }
+
+        guard let track = trackToPlay else {
             print("No more tracks to play")
             return
         }
 
-        // Select and play the next track
-        selectedItems = [firstMedia.id]
-        lastSelectedItem = firstMedia
-        onItemSelect(firstMedia)
-        onItemDoubleClick(firstMedia)
+        // Select and play the track with slight delay to let file list update
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            self.selectedItems = [track.id]
+            self.lastSelectedItem = track
+            self.onItemSelect(track)
+            self.onItemDoubleClick(track)
+        }
+    }
 
-        print("Playing next track: \(firstMedia.name)")
+    // Play previous track in the current folder (nuclear mode)
+    private func playPreviousTrack() {
+        let mediaFiles = fileSystem.files.filter { isMediaFile($0) }
+        guard !mediaFiles.isEmpty else {
+            print("No tracks to play")
+            return
+        }
+
+        // Find currently playing track
+        var trackToPlay: FileItem? = nil
+        if let current = currentMedia,
+           let currentIndex = mediaFiles.firstIndex(where: { $0.path == current.path }) {
+            // Go to previous track
+            if currentIndex > 0 {
+                trackToPlay = mediaFiles[currentIndex - 1]
+                print("Playing previous track: \(trackToPlay!.name)")
+            } else {
+                print("Already at first track")
+                return
+            }
+        } else {
+            // No current track - play last track
+            trackToPlay = mediaFiles.last
+            print("Playing last track: \(trackToPlay!.name)")
+        }
+
+        guard let track = trackToPlay else { return }
+
+        // Select and play
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            self.selectedItems = [track.id]
+            self.lastSelectedItem = track
+            self.onItemSelect(track)
+            self.onItemDoubleClick(track)
+        }
+    }
+
+    // Nuclear mode: Copy current track to other pane
+    private func nuclearModeCopy() {
+        guard let current = currentMedia else {
+            print("No track currently playing to copy")
+            return
+        }
+
+        copyToOtherPane(item: current)
+        print("☢️ Copied: \(current.name)")
+    }
+
+    // Nuclear mode: Move current track to other pane + auto-play next
+    private func nuclearModeMove() {
+        guard let current = currentMedia else {
+            print("No track currently playing to move")
+            return
+        }
+
+        moveToOtherPane(item: current)
+        print("☢️ Moved: \(current.name)")
     }
 
     private func copyToOtherPane(item: FileItem) {
@@ -858,12 +1057,19 @@ struct FileBrowserPanel: View {
 
             // Handle duplicates by auto-incrementing
             var counter = 2
-            while fileManager.fileExists(atPath: destURL.path) {
+            // SAFETY: Prevent infinite loop with max 1000 attempts
+            while fileManager.fileExists(atPath: destURL.path) && counter < 1000 {
                 let fileExtension = sourceURL.pathExtension
                 let baseName = sourceURL.deletingPathExtension().lastPathComponent
                 let newName = fileExtension.isEmpty ? "\(baseName) \(counter)" : "\(baseName) \(counter).\(fileExtension)"
                 destURL = URL(fileURLWithPath: otherPanePath).appendingPathComponent(newName)
                 counter += 1
+            }
+
+            // If we hit the limit, bail out with error
+            guard counter < 1000 else {
+                print("Error: Too many duplicate files - unable to find unique name for \(fileName)")
+                return
             }
 
             try fileManager.copyItem(at: sourceURL, to: destURL)
@@ -886,9 +1092,21 @@ struct FileBrowserPanel: View {
 
         // DJ CURATION: Check if we're moving the currently playing file
         var wasPlayingMovedFile = false
+        var nextTrackName: String? = nil
+
         for item in itemsToMove {
             if let media = currentMedia, media.path == item.path {
                 wasPlayingMovedFile = true
+
+                // Before moving, capture what the next track should be
+                let mediaFiles = fileSystem.files.filter { isMediaFile($0) }
+                if let currentIndex = mediaFiles.firstIndex(where: { $0.path == item.path }) {
+                    let nextIndex = currentIndex + 1
+                    if nextIndex < mediaFiles.count {
+                        nextTrackName = mediaFiles[nextIndex].name
+                    }
+                }
+
                 // Stop playback before moving
                 currentMedia = nil
                 showMediaPlayer = false
@@ -918,7 +1136,7 @@ struct FileBrowserPanel: View {
         // Auto-play next track after moving if we moved the playing file
         if wasPlayingMovedFile {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                playNextTrack()
+                playNextTrack(preferredTrackName: nextTrackName)
             }
         }
     }

@@ -576,11 +576,25 @@ struct ContentView: View {
         // DJ CURATION: Check if we're moving the currently playing file
         let currentMedia = focusedPane == .left ? leftCurrentMedia : rightCurrentMedia
         var wasPlayingMovedFile = false
+        var nextTrackName: String? = nil
 
         for item in sourceFiles {
             // Check if this item is currently playing
             if let media = currentMedia, media.path == item.path {
                 wasPlayingMovedFile = true
+
+                // Before moving, capture what the next track should be
+                let mediaFiles = activeFocusedFileSystem.files.filter { file in
+                    let type = getFileType(for: file)
+                    return type == .audio || type == .video
+                }
+                if let currentIndex = mediaFiles.firstIndex(where: { $0.path == item.path }) {
+                    let nextIndex = currentIndex + 1
+                    if nextIndex < mediaFiles.count {
+                        nextTrackName = mediaFiles[nextIndex].name
+                    }
+                }
+
                 // Stop playback before moving
                 if focusedPane == .left {
                     leftCurrentMedia = nil
@@ -615,33 +629,50 @@ struct ContentView: View {
         // DJ CURATION: Auto-play next track after move
         if wasPlayingMovedFile {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                playNextTrackInFocusedPane()
+                playNextTrackInFocusedPane(preferredTrackName: nextTrackName)
             }
         }
     }
 
-    private func playNextTrackInFocusedPane() {
+    private func playNextTrackInFocusedPane(preferredTrackName: String? = nil) {
         let mediaFiles = activeFocusedFileSystem.files.filter { file in
             let type = getFileType(for: file)
             return type == .audio || type == .video
         }
 
-        guard let firstMedia = mediaFiles.first else {
+        // Try to find the preferred track first (the one that was next before the move)
+        var trackToPlay: FileItem? = nil
+        if let preferredName = preferredTrackName {
+            trackToPlay = mediaFiles.first { $0.name == preferredName }
+            if trackToPlay != nil {
+                print("Playing preferred next track: \(preferredName)")
+            }
+        }
+
+        // If no preferred track or it wasn't found, play the first available
+        if trackToPlay == nil {
+            trackToPlay = mediaFiles.first
+            if let first = trackToPlay {
+                print("Playing first available track: \(first.name)")
+            }
+        }
+
+        guard let track = trackToPlay else {
             print("No more tracks to play")
             return
         }
 
-        // Select and play the next track
-        if focusedPane == .left {
-            selectedLeftItem = firstMedia
-            selectedLeftItems = [firstMedia.id]
-        } else {
-            selectedRightItem = firstMedia
-            selectedRightItems = [firstMedia.id]
+        // Select and play the track with slight delay to let file list update
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            if self.focusedPane == .left {
+                self.selectedLeftItem = track
+                self.selectedLeftItems = [track.id]
+            } else {
+                self.selectedRightItem = track
+                self.selectedRightItems = [track.id]
+            }
+            self.handleDoubleClick(item: track)
         }
-
-        handleDoubleClick(item: firstMedia)
-        print("Playing next track: \(firstMedia.name)")
     }
 
     private func createNewFolder() {
