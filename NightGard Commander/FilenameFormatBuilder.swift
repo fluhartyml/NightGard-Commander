@@ -21,7 +21,7 @@ enum MetadataField: String, CaseIterable, Identifiable {
     case appleMusicID = "Apple Music ID"
     case appleMusicURL = "Apple Music URL"
     case webURL = "Web URL"
-    case separator = "---"
+    case separator = "-"
 
     var id: String { rawValue }
 
@@ -30,18 +30,18 @@ enum MetadataField: String, CaseIterable, Identifiable {
     // For preview generation
     func sampleValue() -> String {
         switch self {
-        case .title: return "Bohemian Rhapsody"
-        case .artist: return "Queen"
-        case .albumName: return "Greatest Hits"
-        case .genres: return "Rock"
-        case .releaseDate: return "1975-10-31"
-        case .year: return "1975"
-        case .trackNumber: return "01"
-        case .explicitContent: return "No"
-        case .appleMusicID: return "12345"
-        case .appleMusicURL: return "music.apple.com/..."
-        case .webURL: return "shazam.com/..."
-        case .separator: return "-"
+        case .title: return "Title"
+        case .artist: return "Artist"
+        case .albumName: return "Album"
+        case .genres: return "Genre"
+        case .releaseDate: return "YYYY-MM-DD"
+        case .year: return "YYYY"
+        case .trackNumber: return "##"
+        case .explicitContent: return "Flag"
+        case .appleMusicID: return "ID"
+        case .appleMusicURL: return "URL"
+        case .webURL: return "URL"
+        case .separator: return " - "
         }
     }
 }
@@ -135,6 +135,12 @@ struct FilenameFormatBuilder: View {
                 .disabled(selectedBlockID == nil)
 
                 Spacer()
+
+                if selectedBlockID == nil {
+                    Text("Click a block to select it")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
             }
 
             Divider()
@@ -248,7 +254,7 @@ struct BlockView: View {
             }
             .pickerStyle(.menu)
             .labelsHidden()
-            .frame(width: 140)
+            .frame(width: 100)
             .onChange(of: selectedField) { oldValue, newValue in
                 onFieldChange(newValue)
             }
@@ -259,14 +265,16 @@ struct BlockView: View {
                 .frame(height: 3)
         }
         .padding(8)
+        .frame(width: 120)
         .background(
             RoundedRectangle(cornerRadius: 6)
-                .fill(isSelected ? Color.blue.opacity(0.1) : Color.secondary.opacity(0.05))
+                .fill(isSelected ? Color.blue.opacity(0.2) : Color.secondary.opacity(0.05))
         )
         .overlay(
             RoundedRectangle(cornerRadius: 6)
                 .stroke(isSelected ? Color.blue : Color.clear, lineWidth: 2)
         )
+        .contentShape(RoundedRectangle(cornerRadius: 6))
         .onTapGesture {
             onSelect()
         }

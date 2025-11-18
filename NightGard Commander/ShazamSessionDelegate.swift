@@ -8,10 +8,10 @@
 import Foundation
 import ShazamKit
 
-class ShazamSessionDelegate: NSObject, SHSessionDelegate {
-    var onMatch: ((SHMatch) -> Void)?
-    var onNoMatch: (() -> Void)?
-    var onError: ((Error) -> Void)?
+class ShazamSessionDelegate: NSObject, SHSessionDelegate, @unchecked Sendable {
+    nonisolated(unsafe) var onMatch: (@Sendable (SHMatch) -> Void)?
+    nonisolated(unsafe) var onNoMatch: (@Sendable () -> Void)?
+    nonisolated(unsafe) var onError: (@Sendable (Error) -> Void)?
 
     func session(_ session: SHSession, didFind match: SHMatch) {
         onMatch?(match)

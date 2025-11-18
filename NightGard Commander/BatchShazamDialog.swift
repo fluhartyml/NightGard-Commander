@@ -16,7 +16,7 @@ struct BatchShazamDialog: View {
 
     var body: some View {
         VStack(spacing: 20) {
-            // Title
+            // Title with spinner
             HStack {
                 Image(systemName: "shazam.logo.fill")
                     .font(.title)
@@ -24,6 +24,12 @@ struct BatchShazamDialog: View {
                 Text("Shazaming Folder")
                     .font(.title2)
                     .fontWeight(.semibold)
+
+                if service.isProcessing {
+                    ProgressView()
+                        .controlSize(.small)
+                        .padding(.leading, 8)
+                }
             }
 
             Text(folderName)

@@ -37,6 +37,7 @@ struct ContentView: View {
     @State private var previewItem: FileItem?
     @State private var leftPaneMode: PaneMode = .files
     @State private var rightPaneMode: PaneMode = .files
+    @State private var showShazamSettings = false
 
     init() {
         // Initialize FileSystemServices with saved paths
@@ -96,7 +97,6 @@ struct ContentView: View {
 
     func getFileType(for item: FileItem) -> FileType {
         guard !item.isDirectory else { return .folder }
-        let filename = item.name.lowercased()
         let ext = (item.name as NSString).pathExtension.lowercased()
 
         // Check for any webloc files (Safari bookmarks, Apple Music links, etc.)
@@ -227,6 +227,39 @@ struct ContentView: View {
         }
     }
 
+    // Helper computed properties to reduce type-checking complexity
+    private var leftPaneIcon: String {
+        switch leftPaneMode {
+        case .files: return "music.note.list"
+        case .playlist: return "info.circle"
+        case .metadata: return "folder.fill"
+        }
+    }
+
+    private var leftPaneLabel: String {
+        switch leftPaneMode {
+        case .files: return "Playlist"
+        case .playlist: return "Metadata"
+        case .metadata: return "Files"
+        }
+    }
+
+    private var rightPaneIcon: String {
+        switch rightPaneMode {
+        case .files: return "music.note.list"
+        case .playlist: return "info.circle"
+        case .metadata: return "folder.fill"
+        }
+    }
+
+    private var rightPaneLabel: String {
+        switch rightPaneMode {
+        case .files: return "Playlist"
+        case .playlist: return "Metadata"
+        case .metadata: return "Files"
+        }
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             // Playlist toggle toolbar
@@ -234,8 +267,8 @@ struct ContentView: View {
                 // Left pane toggle
                 Button(action: { toggleLeftPane() }) {
                     HStack(spacing: 4) {
-                        Image(systemName: leftPaneMode == .files ? "music.note.list" : (leftPaneMode == .playlist ? "info.circle" : "folder.fill"))
-                        Text("Left: \(leftPaneMode == .files ? "Playlist" : (leftPaneMode == .playlist ? "Metadata" : "Files"))")
+                        Image(systemName: leftPaneIcon)
+                        Text("Left: \(leftPaneLabel)")
                             .font(.caption)
                     }
                 }
@@ -247,8 +280,8 @@ struct ContentView: View {
                 // Right pane toggle
                 Button(action: { toggleRightPane() }) {
                     HStack(spacing: 4) {
-                        Image(systemName: rightPaneMode == .files ? "music.note.list" : (rightPaneMode == .playlist ? "info.circle" : "folder.fill"))
-                        Text("Right: \(rightPaneMode == .files ? "Playlist" : (rightPaneMode == .playlist ? "Metadata" : "Files"))")
+                        Image(systemName: rightPaneIcon)
+                        Text("Right: \(rightPaneLabel)")
                             .font(.caption)
                     }
                 }
@@ -310,6 +343,7 @@ struct ContentView: View {
                             rightFileSystem.navigateToFolder(path)
                         },
                         selectedItems: $selectedLeftItems,
+                        showShazamSettings: $showShazamSettings,
                         playlistManager: leftPlaylistManager
                     )
                 }
@@ -365,6 +399,7 @@ struct ContentView: View {
                             leftFileSystem.navigateToFolder(path)
                         },
                         selectedItems: $selectedRightItems,
+                        showShazamSettings: $showShazamSettings,
                         playlistManager: rightPlaylistManager
                     )
                 }
@@ -479,6 +514,9 @@ struct ContentView: View {
         }
         .onChange(of: rightFileSystem.currentPath) { oldValue, newValue in
             savedRightPath = newValue
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .openShazamSettings)) { _ in
+            showShazamSettings = true
         }
     }
 

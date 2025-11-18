@@ -8,6 +8,7 @@
 import SwiftUI
 import AVFoundation
 import ShazamKit
+import os
 
 struct MetadataEditorPanel: View {
     let selectedFile: FileItem?
@@ -330,60 +331,90 @@ struct MetadataEditorPanel: View {
                 // Read audio file and create signature
                 let signature = try await createSignature(from: audioURL)
 
-                // Use delegate pattern for ShazamKit
-                await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                // Use delegate pattern with timeout
+                await withTaskGroup(of: Void.self) { group in
                     let delegate = ShazamSessionDelegate()
                     let session = SHSession()
+                    let delegateRef: ShazamSessionDelegate? = delegate
                     session.delegate = delegate
 
-                    delegate.onMatch = { match in
-                        guard let mediaItem = match.mediaItems.first else {
-                            Task { @MainActor in
-                                detectionError = "No match found"
+                    group.addTask {
+                        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                            let hasResumed = OSAllocatedUnfairLock(initialState: false)
+
+                            delegate.onMatch = { match in
+                                guard !hasResumed.withLock({ resumed in
+                                    if resumed { return true }
+                                    resumed = true
+                                    return false
+                                }) else { return }
+
+                                guard let mediaItem = match.mediaItems.first else {
+                                    Task { @MainActor in
+                                        detectionError = "No match found"
+                                        isDetecting = false
+                                    }
+                                    continuation.resume()
+                                    return
+                                }
+
+                                Task { @MainActor in
+                                    if let songTitle = mediaItem.title {
+                                        title = songTitle
+                                    }
+                                    if let songArtist = mediaItem.artist {
+                                        artist = songArtist
+                                    }
+                                    applyFilenameFormat()
+                                    isDetecting = false
+                                }
+                                continuation.resume()
+                            }
+
+                            delegate.onNoMatch = {
+                                guard !hasResumed.withLock({ resumed in
+                                    if resumed { return true }
+                                    resumed = true
+                                    return false
+                                }) else { return }
+                                Task { @MainActor in
+                                    detectionError = "No match found"
+                                    isDetecting = false
+                                }
+                                continuation.resume()
+                            }
+
+                            delegate.onError = { error in
+                                guard !hasResumed.withLock({ resumed in
+                                    if resumed { return true }
+                                    resumed = true
+                                    return false
+                                }) else { return }
+                                Task { @MainActor in
+                                    detectionError = "Detection failed: \(error.localizedDescription)"
+                                    isDetecting = false
+                                }
+                                continuation.resume()
+                            }
+
+                            session.match(signature)
+                        }
+                    }
+
+                    // Timeout task
+                    group.addTask {
+                        try? await Task.sleep(nanoseconds: 30_000_000_000)
+                        await MainActor.run {
+                            if isDetecting {
+                                detectionError = "Detection timeout"
                                 isDetecting = false
                             }
-                            continuation.resume()
-                            return
                         }
-
-                        // Update fields on main thread
-                        Task { @MainActor in
-                            if let songTitle = mediaItem.title {
-                                title = songTitle
-                            }
-                            if let songArtist = mediaItem.artist {
-                                artist = songArtist
-                            }
-                            // Note: SHMatchedMediaItem doesn't have albumName or releaseDate properties
-                            // These would need to be fetched from Apple Music API separately
-                            // For now, we only auto-fill title and artist
-
-                            // Apply filename format if blocks configured
-                            applyFilenameFormat()
-
-                            isDetecting = false
-                        }
-                        continuation.resume()
                     }
 
-                    delegate.onNoMatch = {
-                        Task { @MainActor in
-                            detectionError = "No match found"
-                            isDetecting = false
-                        }
-                        continuation.resume()
-                    }
-
-                    delegate.onError = { error in
-                        Task { @MainActor in
-                            detectionError = "Detection failed: \(error.localizedDescription)"
-                            isDetecting = false
-                        }
-                        continuation.resume()
-                    }
-
-                    // Start matching
-                    session.match(signature)
+                    await group.next()
+                    group.cancelAll()
+                    _ = delegateRef
                 }
             } catch {
                 await MainActor.run {
@@ -397,13 +428,20 @@ struct MetadataEditorPanel: View {
     private func createSignature(from url: URL) async throws -> SHSignature {
         let audioFile = try AVAudioFile(forReading: url)
         let format = audioFile.processingFormat
-        let frameCount = AVAudioFrameCount(audioFile.length)
+
+        // ShazamKit only needs ~3-5 seconds of audio for recognition
+        // Limit to first 10 seconds to avoid overflow and improve performance
+        let maxSeconds: Double = 10.0
+        let maxFrames = AVAudioFrameCount(format.sampleRate * maxSeconds)
+        let frameCount = min(AVAudioFrameCount(audioFile.length), maxFrames)
 
         guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount) else {
             throw NSError(domain: "MetadataEditor", code: 1, userInfo: [NSLocalizedDescriptionKey: "Failed to create audio buffer"])
         }
 
-        try audioFile.read(into: buffer)
+        // Read only the needed frames
+        buffer.frameLength = frameCount
+        try audioFile.read(into: buffer, frameCount: frameCount)
 
         let signatureGenerator = SHSignatureGenerator()
         try signatureGenerator.append(buffer, at: nil)
@@ -434,7 +472,7 @@ struct MetadataEditorPanel: View {
                 // Track number not provided by Shazam, skip
                 continue
             case .separator:
-                parts.append("-")
+                parts.append(" - ")
             default:
                 // Skip fields not relevant for filename
                 continue
@@ -444,7 +482,7 @@ struct MetadataEditorPanel: View {
         // Construct filename with extension
         if let selectedFile = selectedFile {
             let ext = (selectedFile.name as NSString).pathExtension
-            let newName = parts.joined(separator: " ") + "." + ext
+            let newName = parts.joined(separator: "") + "." + ext
 
             // Sanitize filename (remove invalid characters)
             let sanitized = newName.replacingOccurrences(of: "/", with: "-")

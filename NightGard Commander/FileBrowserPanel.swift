@@ -43,7 +43,7 @@ struct FileBrowserPanel: View {
     @State private var showDuplicateAlert = false
     @State private var pendingMoveItem: FileItem?
     @State private var showTradingCardCreator = false
-    @State private var showShazamSettings = false
+    @Binding var showShazamSettings: Bool
     @State private var showBatchShazam = false
     @State private var showQueueReview = false
     @FocusState private var isNewItemFocused: Bool
@@ -192,15 +192,36 @@ struct FileBrowserPanel: View {
                 .help("Create Apple Music Link File")
 
                 // Shazam folder button
-                Button(action: {
-                    triggerShazamFolder()
-                }) {
+                Menu {
+                    Button(action: {
+                        showBatchShazam = true
+                    }) {
+                        Label("Shazam Current Folder", systemImage: "folder.fill")
+                    }
+
+                    Button(action: {
+                        showQueueReview = true
+                    }) {
+                        Label("Review Queue (\(ShazamQueue.shared.items.count))", systemImage: "list.bullet")
+                    }
+                    .disabled(ShazamQueue.shared.items.isEmpty)
+
+                    Divider()
+
+                    Button(action: {
+                        showShazamSettings = true
+                    }) {
+                        Label("Shazam Settings...", systemImage: "gear")
+                    }
+                } label: {
                     Image(systemName: "shazam.logo.fill")
                         .foregroundColor(.blue)
+                } primaryAction: {
+                    triggerShazamFolder()
                 }
-                .buttonStyle(.borderless)
+                .menuStyle(.borderlessButton)
                 .frame(width: 30)
-                .help("Shazam all audio files in current folder")
+                .help("Shazam all audio files in current folder (click and hold for options)")
 
                 if fileSystem.canNavigateUp() {
                     Button(action: {
@@ -400,7 +421,7 @@ struct FileBrowserPanel: View {
 
                             let selectedFiles = fileSystem.files.filter { selectedItems.contains($0.id) }
                             let hasMedia = selectedFiles.contains { isMediaFile($0) }
-                            if hasMedia, let addAction = onAddToPlaylist {
+                            if hasMedia, onAddToPlaylist != nil {
                                 Divider()
                                 Button("Add \(selectedItems.count) Items to Playlist") {
                                     addSelectedToPlaylist()
@@ -528,7 +549,7 @@ struct FileBrowserPanel: View {
                     }
                     .onKeyPress(.space) {
                         // Space = Play/Pause
-                        if let media = currentMedia {
+                        if currentMedia != nil {
                             // Toggle play state
                             showMediaPlayer.toggle()
                         } else {

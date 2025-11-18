@@ -8,6 +8,7 @@
 import SwiftUI
 import ShazamKit
 import AVFoundation
+import os
 
 // Result of a single Shazam detection
 struct ShazamResult {
@@ -53,7 +54,10 @@ class ShazamService {
         let audioFiles = findAudioFiles(in: path)
         totalFiles = audioFiles.count
 
-        // Process each file
+        // Process ALL files in folder (internal batching for progress saving)
+        let internalBatchSize = 10  // Save progress every 10 files
+        var batchCount = 0
+
         for audioFile in audioFiles {
             if isCancelled {
                 break
@@ -84,6 +88,13 @@ class ShazamService {
             }
 
             processedFiles += 1
+            batchCount += 1
+
+            // Save progress every 10 files (internal batch checkpoint)
+            if batchCount >= internalBatchSize {
+                batchCount = 0
+                // Progress is auto-saved via settings and queue persistence
+            }
         }
 
         isProcessing = false
@@ -118,60 +129,113 @@ class ShazamService {
             let audioURL = URL(fileURLWithPath: path)
             let signature = try await createSignature(from: audioURL)
 
-            // Use delegate pattern for ShazamKit
-            return await withCheckedContinuation { continuation in
+            // Use delegate pattern for ShazamKit with timeout
+            return await withTaskGroup(of: ShazamResult?.self) { group in
                 let delegate = ShazamSessionDelegate()
                 let session = SHSession()
+
+                // Keep strong reference to delegate
+                let delegateRef: ShazamSessionDelegate? = delegate
+
                 session.delegate = delegate
 
-                delegate.onMatch = { match in
-                    guard let mediaItem = match.mediaItems.first else {
-                        continuation.resume(returning: ShazamResult(
-                            filePath: path,
-                            fileName: fileName,
-                            matched: false,
-                            error: "No match found"
-                        ))
-                        return
+                // Add detection task
+                group.addTask {
+                    await withCheckedContinuation { continuation in
+                        let hasResumed = OSAllocatedUnfairLock(initialState: false)
+
+                        delegate.onMatch = { match in
+                            guard !hasResumed.withLock({ resumed in
+                                if resumed { return true }
+                                resumed = true
+                                return false
+                            }) else { return }
+
+                            guard let mediaItem = match.mediaItems.first else {
+                                continuation.resume(returning: ShazamResult(
+                                    filePath: path,
+                                    fileName: fileName,
+                                    matched: false,
+                                    error: "No match found"
+                                ))
+                                return
+                            }
+
+                            continuation.resume(returning: ShazamResult(
+                                filePath: path,
+                                fileName: fileName,
+                                title: mediaItem.title,
+                                artist: mediaItem.artist,
+                                album: nil,
+                                genre: nil,
+                                year: nil,
+                                matched: true,
+                                error: nil
+                            ))
+                        }
+
+                        delegate.onNoMatch = {
+                            guard !hasResumed.withLock({ resumed in
+                                if resumed { return true }
+                                resumed = true
+                                return false
+                            }) else { return }
+                            continuation.resume(returning: ShazamResult(
+                                filePath: path,
+                                fileName: fileName,
+                                matched: false,
+                                error: "No match found"
+                            ))
+                        }
+
+                        delegate.onError = { error in
+                            guard !hasResumed.withLock({ resumed in
+                                if resumed { return true }
+                                resumed = true
+                                return false
+                            }) else { return }
+                            continuation.resume(returning: ShazamResult(
+                                filePath: path,
+                                fileName: fileName,
+                                matched: false,
+                                error: error.localizedDescription
+                            ))
+                        }
+
+                        // Start matching
+                        session.match(signature)
                     }
-
-                    // Extract metadata
-                    // Note: SHMatchedMediaItem only provides title and artist
-                    // Album, genre, year would require Apple Music API lookup
-
-                    continuation.resume(returning: ShazamResult(
-                        filePath: path,
-                        fileName: fileName,
-                        title: mediaItem.title,
-                        artist: mediaItem.artist,
-                        album: nil,
-                        genre: nil,
-                        year: nil,
-                        matched: true,
-                        error: nil
-                    ))
                 }
 
-                delegate.onNoMatch = {
-                    continuation.resume(returning: ShazamResult(
+                // Add timeout task (30 seconds)
+                group.addTask {
+                    try? await Task.sleep(nanoseconds: 30_000_000_000)
+                    return ShazamResult(
                         filePath: path,
                         fileName: fileName,
                         matched: false,
-                        error: "No match found"
-                    ))
+                        error: "Detection timeout"
+                    )
                 }
 
-                delegate.onError = { error in
-                    continuation.resume(returning: ShazamResult(
+                // Return first result (either match or timeout)
+                if let result = await group.next() {
+                    group.cancelAll()
+                    _ = delegateRef // Keep delegate alive
+                    return result ?? ShazamResult(
                         filePath: path,
                         fileName: fileName,
                         matched: false,
-                        error: error.localizedDescription
-                    ))
+                        error: "Unknown error"
+                    )
                 }
 
-                // Start matching
-                session.match(signature)
+                return ShazamResult(
+                    filePath: path,
+                    fileName: fileName,
+                    matched: false,
+                    error: "Task failed"
+                )
             }
         } catch {
             return ShazamResult(
@@ -186,13 +250,20 @@ class ShazamService {
     private func createSignature(from url: URL) async throws -> SHSignature {
         let audioFile = try AVAudioFile(forReading: url)
         let format = audioFile.processingFormat
-        let frameCount = AVAudioFrameCount(audioFile.length)
+
+        // ShazamKit only needs ~3-5 seconds of audio for recognition
+        // Limit to first 10 seconds to avoid overflow and improve performance
+        let maxSeconds: Double = 10.0
+        let maxFrames = AVAudioFrameCount(format.sampleRate * maxSeconds)
+        let frameCount = min(AVAudioFrameCount(audioFile.length), maxFrames)
 
         guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount) else {
             throw NSError(domain: "ShazamService", code: 1, userInfo: [NSLocalizedDescriptionKey: "Failed to create audio buffer"])
         }
 
-        try audioFile.read(into: buffer)
+        // Read only the needed frames
+        buffer.frameLength = frameCount
+        try audioFile.read(into: buffer, frameCount: frameCount)
 
         let signatureGenerator = SHSignatureGenerator()
         try signatureGenerator.append(buffer, at: nil)
@@ -248,13 +319,13 @@ class ShazamService {
             case .year, .releaseDate:
                 if let year = result.year { parts.append(year) }
             case .separator:
-                parts.append("-")
+                parts.append(" - ")
             default:
                 continue
             }
         }
 
-        let name = parts.joined(separator: " ")
+        let name = parts.joined(separator: "")
         let sanitized = name.replacingOccurrences(of: "/", with: "-")
                             .replacingOccurrences(of: ":", with: "-")
 

@@ -17,5 +17,17 @@ struct NightGard_CommanderApp: App {
             ContentView()
                 .environment(\.managedObjectContext, persistenceController.container.viewContext)
         }
+        .commands {
+            CommandGroup(replacing: .appSettings) {
+                Button("Settings...") {
+                    NotificationCenter.default.post(name: .openShazamSettings, object: nil)
+                }
+                .keyboardShortcut(",", modifiers: .command)
+            }
+        }
     }
+}
+
+extension Notification.Name {
+    static let openShazamSettings = Notification.Name("openShazamSettings")
 }
