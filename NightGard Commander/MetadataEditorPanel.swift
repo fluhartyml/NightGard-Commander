@@ -7,6 +7,7 @@
 
 import SwiftUI
 import AVFoundation
+import ShazamKit
 
 struct MetadataEditorPanel: View {
     let selectedFile: FileItem?
@@ -23,9 +24,56 @@ struct MetadataEditorPanel: View {
     @State private var isSaving = false
     @State private var lastLoadedPath: String?
 
+    // Shazam detection
+    @State private var isDetecting = false
+    @State private var detectionError: String?
+
+    // Filename format builder
+    @State private var showFormatBuilder = false
+    @State private var formatBlocks: [FormatBlock] = []
+
     var body: some View {
         VStack(spacing: 0) {
             if let file = selectedFile {
+                // Toolbar with Shazam and Format buttons
+                HStack(spacing: 12) {
+                    Button(action: {
+                        detectWithShazam(file: file)
+                    }) {
+                        if isDetecting {
+                            ProgressView()
+                                .controlSize(.small)
+                        } else {
+                            Label("Shazam", systemImage: "shazam.logo.fill")
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.blue)
+                    .disabled(isDetecting)
+                    .help("Auto-detect song metadata with Shazam")
+
+                    Button(action: {
+                        showFormatBuilder = true
+                    }) {
+                        Label("Set Format", systemImage: "slider.horizontal.3")
+                    }
+                    .buttonStyle(.bordered)
+                    .help("Configure filename format")
+
+                    Spacer()
+
+                    if let error = detectionError {
+                        Text(error)
+                            .font(.caption)
+                            .foregroundColor(.red)
+                    }
+                }
+                .padding(.horizontal)
+                .padding(.vertical, 8)
+                .background(Color.secondary.opacity(0.05))
+
+                Divider()
+
                 // Filename editor at top
                 VStack(spacing: 8) {
                     Text("File Name")
@@ -117,6 +165,9 @@ struct MetadataEditorPanel: View {
             if let file = selectedFile {
                 loadMetadata(for: file)
             }
+        }
+        .sheet(isPresented: $showFormatBuilder) {
+            FilenameFormatBuilder(isPresented: $showFormatBuilder, formatBlocks: $formatBlocks)
         }
     }
 
@@ -264,6 +315,142 @@ struct MetadataEditorPanel: View {
                 print("Error saving metadata: \(error)")
                 await MainActor.run { isSaving = false }
             }
+        }
+    }
+
+    private func detectWithShazam(file: FileItem) {
+        isDetecting = true
+        detectionError = nil
+
+        Task {
+            do {
+                // Create audio file URL
+                let audioURL = URL(fileURLWithPath: file.path)
+
+                // Read audio file and create signature
+                let signature = try await createSignature(from: audioURL)
+
+                // Use delegate pattern for ShazamKit
+                await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                    let delegate = ShazamSessionDelegate()
+                    let session = SHSession()
+                    session.delegate = delegate
+
+                    delegate.onMatch = { match in
+                        guard let mediaItem = match.mediaItems.first else {
+                            Task { @MainActor in
+                                detectionError = "No match found"
+                                isDetecting = false
+                            }
+                            continuation.resume()
+                            return
+                        }
+
+                        // Update fields on main thread
+                        Task { @MainActor in
+                            if let songTitle = mediaItem.title {
+                                title = songTitle
+                            }
+                            if let songArtist = mediaItem.artist {
+                                artist = songArtist
+                            }
+                            // Note: SHMatchedMediaItem doesn't have albumName or releaseDate properties
+                            // These would need to be fetched from Apple Music API separately
+                            // For now, we only auto-fill title and artist
+
+                            // Apply filename format if blocks configured
+                            applyFilenameFormat()
+
+                            isDetecting = false
+                        }
+                        continuation.resume()
+                    }
+
+                    delegate.onNoMatch = {
+                        Task { @MainActor in
+                            detectionError = "No match found"
+                            isDetecting = false
+                        }
+                        continuation.resume()
+                    }
+
+                    delegate.onError = { error in
+                        Task { @MainActor in
+                            detectionError = "Detection failed: \(error.localizedDescription)"
+                            isDetecting = false
+                        }
+                        continuation.resume()
+                    }
+
+                    // Start matching
+                    session.match(signature)
+                }
+            } catch {
+                await MainActor.run {
+                    detectionError = "Detection failed: \(error.localizedDescription)"
+                    isDetecting = false
+                }
+            }
+        }
+    }
+
+    private func createSignature(from url: URL) async throws -> SHSignature {
+        let audioFile = try AVAudioFile(forReading: url)
+        let format = audioFile.processingFormat
+        let frameCount = AVAudioFrameCount(audioFile.length)
+
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount) else {
+            throw NSError(domain: "MetadataEditor", code: 1, userInfo: [NSLocalizedDescriptionKey: "Failed to create audio buffer"])
+        }
+
+        try audioFile.read(into: buffer)
+
+        let signatureGenerator = SHSignatureGenerator()
+        try signatureGenerator.append(buffer, at: nil)
+
+        return signatureGenerator.signature()
+    }
+
+    private func applyFilenameFormat() {
+        guard !formatBlocks.isEmpty else { return }
+
+        var parts: [String] = []
+
+        for block in formatBlocks {
+            switch block.field {
+            case .title:
+                if !title.isEmpty { parts.append(title) }
+            case .artist:
+                if !artist.isEmpty { parts.append(artist) }
+            case .albumName:
+                if !album.isEmpty { parts.append(album) }
+            case .genres:
+                if !genre.isEmpty { parts.append(genre) }
+            case .year:
+                if !year.isEmpty { parts.append(year) }
+            case .releaseDate:
+                if !year.isEmpty { parts.append(year) }
+            case .trackNumber:
+                // Track number not provided by Shazam, skip
+                continue
+            case .separator:
+                parts.append("-")
+            default:
+                // Skip fields not relevant for filename
+                continue
+            }
+        }
+
+        // Construct filename with extension
+        if let selectedFile = selectedFile {
+            let ext = (selectedFile.name as NSString).pathExtension
+            let newName = parts.joined(separator: " ") + "." + ext
+
+            // Sanitize filename (remove invalid characters)
+            let sanitized = newName.replacingOccurrences(of: "/", with: "-")
+                                    .replacingOccurrences(of: ":", with: "-")
+
+            fileName = sanitized
         }
     }
 }

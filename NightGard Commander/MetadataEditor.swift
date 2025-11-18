@@ -57,13 +57,13 @@ struct MetadataEditor: View {
             } else {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 16) {
-                        MetadataField(label: "Title", text: $title)
-                        MetadataField(label: "Artist", text: $artist)
-                        MetadataField(label: "Album", text: $album)
-                        MetadataField(label: "Year", text: $year)
-                        MetadataField(label: "Genre", text: $genre)
-                        MetadataField(label: "Composer", text: $composer)
-                        MetadataField(label: "Track #", text: $trackNumber)
+                        MetadataTextField(label: "Title", text: $title)
+                        MetadataTextField(label: "Artist", text: $artist)
+                        MetadataTextField(label: "Album", text: $album)
+                        MetadataTextField(label: "Year", text: $year)
+                        MetadataTextField(label: "Genre", text: $genre)
+                        MetadataTextField(label: "Composer", text: $composer)
+                        MetadataTextField(label: "Track #", text: $trackNumber)
 
                         VStack(alignment: .leading, spacing: 4) {
                             Text("Comments")
@@ -274,7 +274,7 @@ struct MetadataEditor: View {
     }
 }
 
-struct MetadataField: View {
+struct MetadataTextField: View {
     let label: String
     @Binding var text: String
 

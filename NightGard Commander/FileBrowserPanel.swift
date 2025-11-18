@@ -43,6 +43,9 @@ struct FileBrowserPanel: View {
     @State private var showDuplicateAlert = false
     @State private var pendingMoveItem: FileItem?
     @State private var showTradingCardCreator = false
+    @State private var showShazamSettings = false
+    @State private var showBatchShazam = false
+    @State private var showQueueReview = false
     @FocusState private var isNewItemFocused: Bool
     @FocusState private var isRenameFocused: Bool
 
@@ -187,6 +190,17 @@ struct FileBrowserPanel: View {
                 .buttonStyle(.borderless)
                 .frame(width: 30)
                 .help("Create Apple Music Link File")
+
+                // Shazam folder button
+                Button(action: {
+                    triggerShazamFolder()
+                }) {
+                    Image(systemName: "shazam.logo.fill")
+                        .foregroundColor(.blue)
+                }
+                .buttonStyle(.borderless)
+                .frame(width: 30)
+                .help("Shazam all audio files in current folder")
 
                 if fileSystem.canNavigateUp() {
                     Button(action: {
@@ -680,6 +694,26 @@ struct FileBrowserPanel: View {
                 }
             )
         }
+        .sheet(isPresented: $showShazamSettings) {
+            ShazamSettingsPanel(isPresented: $showShazamSettings)
+        }
+        .sheet(isPresented: $showBatchShazam) {
+            BatchShazamDialog(
+                isPresented: $showBatchShazam,
+                folderPath: fileSystem.currentPath,
+                folderName: (fileSystem.currentPath as NSString).lastPathComponent
+            )
+        }
+        .sheet(isPresented: $showQueueReview) {
+            QueueReviewPanel(
+                isPresented: $showQueueReview,
+                onSelectFile: { filePath in
+                    // Navigate to file and select it
+                    let folderPath = (filePath as NSString).deletingLastPathComponent
+                    fileSystem.navigateToFolder(folderPath)
+                }
+            )
+        }
         .alert("File Already Exists", isPresented: $showDuplicateAlert) {
             Button("Replace", role: .destructive) {
                 if let item = pendingMoveItem {
@@ -718,6 +752,21 @@ struct FileBrowserPanel: View {
         }
         .animation(.easeInOut, value: showNuclearToast)
     }
+
+    // MARK: - Shazam Integration
+
+    private func triggerShazamFolder() {
+        // Check if user has configured Shazam settings (first-run check)
+        if !ShazamSettings.shared.isConfigured {
+            // Show settings panel first
+            showShazamSettings = true
+        } else {
+            // Start batch Shazam
+            showBatchShazam = true
+        }
+    }
+
+    // MARK: - Helper Functions
 
     private func iconForFile(_ item: FileItem) -> (name: String, color: Color) {
         if item.isDirectory {
