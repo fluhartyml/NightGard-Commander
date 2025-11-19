@@ -10,6 +10,7 @@ import SwiftUI
 struct ShazamResultsDialog: View {
     @Binding var isPresented: Bool
     let matchedCount: Int
+    let genreReviewCount: Int
     let queuedCount: Int
     let onViewQueue: () -> Void
 
@@ -38,11 +39,22 @@ struct ShazamResultsDialog: View {
                         .fontWeight(.semibold)
                 }
 
+                if genreReviewCount > 0 {
+                    HStack {
+                        Image(systemName: "pencil.circle.fill")
+                            .foregroundColor(.purple)
+                        Text("Need genre selection:")
+                        Spacer()
+                        Text("\(genreReviewCount) files")
+                            .fontWeight(.semibold)
+                    }
+                }
+
                 if queuedCount > 0 {
                     HStack {
                         Image(systemName: "exclamationmark.triangle.fill")
                             .foregroundColor(.orange)
-                        Text("Queued for review:")
+                        Text("Failed to match:")
                         Spacer()
                         Text("\(queuedCount) files")
                             .fontWeight(.semibold)
@@ -54,35 +66,50 @@ struct ShazamResultsDialog: View {
             .cornerRadius(8)
 
             if matchedCount > 0 {
-                Text("Files have been renamed and metadata saved.")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+                if genreReviewCount > 0 || queuedCount > 0 {
+                    Text("Matched files have been renamed. Review queue to complete remaining files.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                } else {
+                    Text("All files have been successfully processed and renamed.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
             }
 
             Divider()
 
             // Actions
             HStack(spacing: 12) {
-                if queuedCount > 0 {
+                if genreReviewCount > 0 || queuedCount > 0 {
                     Button(action: {
                         onViewQueue()
                     }) {
-                        Label("View Queue", systemImage: "list.bullet")
+                        Label("Review Queue", systemImage: "list.bullet.clipboard")
                     }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(.borderedProminent)
+                    .tint(genreReviewCount > 0 ? .purple : .orange)
                 }
 
                 Spacer()
 
-                Button("Done") {
-                    isPresented = false
+                if genreReviewCount > 0 || queuedCount > 0 {
+                    Button("Done") {
+                        isPresented = false
+                    }
+                    .buttonStyle(.bordered)
+                    .keyboardShortcut(.defaultAction)
+                } else {
+                    Button("Done") {
+                        isPresented = false
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction)
                 }
-                .buttonStyle(.borderedProminent)
-                .keyboardShortcut(.defaultAction)
             }
         }
         .padding(24)
-        .frame(width: 450, height: queuedCount > 0 ? 350 : 300)
+        .frame(width: 450, height: (genreReviewCount > 0 || queuedCount > 0) ? 380 : 300)
     }
 }
 
@@ -91,6 +118,7 @@ struct ShazamResultsDialog: View {
     ShazamResultsDialog(
         isPresented: $isPresented,
         matchedCount: 1095,
+        genreReviewCount: 12,
         queuedCount: 5,
         onViewQueue: {}
     )

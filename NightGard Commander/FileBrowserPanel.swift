@@ -45,6 +45,7 @@ struct FileBrowserPanel: View {
     @State private var showTradingCardCreator = false
     @Binding var showShazamSettings: Bool
     @State private var showBatchShazam = false
+    @State private var showBatchITunes = false
     @State private var showQueueReview = false
     @FocusState private var isNewItemFocused: Bool
     @FocusState private var isRenameFocused: Bool
@@ -222,6 +223,16 @@ struct FileBrowserPanel: View {
                     }
                 }
                 .help("Shazam all audio files in current folder (right-click for options)")
+
+                // iTunes Lookup button
+                Button(action: {
+                    triggerITunesLookup()
+                }) {
+                    Image(systemName: "apple.logo")
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.purple)
+                .help("Complete metadata using iTunes Store database")
 
                 if fileSystem.canNavigateUp() {
                     Button(action: {
@@ -728,6 +739,16 @@ struct FileBrowserPanel: View {
                 }
             )
         }
+        .sheet(isPresented: $showBatchITunes) {
+            BatchITunesDialog(
+                isPresented: $showBatchITunes,
+                folderPath: fileSystem.currentPath,
+                folderName: (fileSystem.currentPath as NSString).lastPathComponent,
+                onFileUpdated: {
+                    fileSystem.loadFiles()
+                }
+            )
+        }
         .sheet(isPresented: $showQueueReview) {
             QueueReviewPanel(
                 isPresented: $showQueueReview,
@@ -788,6 +809,11 @@ struct FileBrowserPanel: View {
             // Start batch Shazam
             showBatchShazam = true
         }
+    }
+
+    private func triggerITunesLookup() {
+        // Start batch iTunes lookup
+        showBatchITunes = true
     }
 
     // MARK: - Helper Functions

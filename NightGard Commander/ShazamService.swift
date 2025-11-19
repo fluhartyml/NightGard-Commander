@@ -18,6 +18,8 @@ struct ShazamResult {
     var artist: String?
     var album: String?
     var genre: String?
+    var allGenres: [String]  // All available genres from Shazam
+    var needsGenreReview: Bool  // True if user should manually pick genre
     var year: String?
     var matched: Bool
     var error: String?
@@ -33,6 +35,7 @@ class ShazamService {
     var currentFile = ""
     var matchedCount = 0
     var queuedCount = 0
+    var genreReviewCount = 0  // Files matched but need genre selection
 
     // Results
     var results: [ShazamResult] = []
@@ -52,6 +55,7 @@ class ShazamService {
         processedFiles = 0
         matchedCount = 0
         queuedCount = 0
+        genreReviewCount = 0
 
         // Find all audio files in folder
         let audioFiles = findAudioFiles(in: path)
@@ -73,10 +77,17 @@ class ShazamService {
             if result.matched {
                 matchedCount += 1
 
-                // Auto-rename if enabled
-                // TODO: Metadata saving disabled - AVAssetExportSession doesn't support MP3 on macOS
-                if ShazamSettings.shared.autoRename {
-                    await renameFile(result: result)
+                // Check if file needs genre review
+                if result.needsGenreReview {
+                    genreReviewCount += 1
+                    // Add to genre review queue for user to choose
+                    GenreReviewQueue.shared.add(result: result)
+                    print("📝 [SHAZAM] Added to genre review queue: \(result.fileName)")
+                } else {
+                    // Auto-rename and save metadata (only for files with clear genre)
+                    if ShazamSettings.shared.autoRename {
+                        await renameAndSaveMetadata(result: result)
+                    }
                 }
             } else {
                 queuedCount += 1
@@ -108,6 +119,65 @@ class ShazamService {
         isCancelled = true
     }
 
+    // Deep dive detection - tries multiple positions in the song
+    @MainActor
+    func detectFileDeepDive(path: String) async -> ShazamResult {
+        currentFile = (path as NSString).lastPathComponent
+        print("🔍 [DEEP DIVE] Starting deep dive detection for: \(currentFile)")
+
+        // Get file duration first
+        let audioURL = URL(fileURLWithPath: path)
+        guard let audioFile = try? AVAudioFile(forReading: audioURL) else {
+            return ShazamResult(
+                filePath: path,
+                fileName: currentFile,
+                allGenres: [],
+                needsGenreReview: false,
+                matched: false,
+                error: "Could not open audio file"
+            )
+        }
+
+        let format = audioFile.processingFormat
+        let totalDuration = Double(audioFile.length) / format.sampleRate
+        print("🔍 [DEEP DIVE] File duration: \(totalDuration) seconds")
+
+        // Try multiple positions: 30s, 60s, 90s, 120s (skip intros/outros)
+        let samplePositions: [Double] = [30.0, 60.0, 90.0, 120.0, 0.0] // Try middle positions first, then beginning as fallback
+        let sampleDuration = 15.0 // Use longer sample for deep dive
+
+        for position in samplePositions {
+            // Skip if position is beyond file length
+            if position + sampleDuration > totalDuration {
+                print("🔍 [DEEP DIVE] Skipping position \(position)s (beyond file length)")
+                continue
+            }
+
+            print("🔍 [DEEP DIVE] Trying position: \(position)s")
+            let result = await detectFile(path: path, startOffset: position, duration: sampleDuration)
+
+            if result.matched {
+                print("✅ [DEEP DIVE] Match found at position \(position)s!")
+                return result
+            } else {
+                print("❌ [DEEP DIVE] No match at position \(position)s")
+            }
+
+            // Small delay between attempts to avoid rate limiting
+            try? await Task.sleep(nanoseconds: 1_000_000_000) // 1 second
+        }
+
+        print("❌ [DEEP DIVE] No matches found at any position")
+        return ShazamResult(
+            filePath: path,
+            fileName: currentFile,
+            allGenres: [],
+            needsGenreReview: false,
+            matched: false,
+            error: "No match found (tried multiple positions)"
+        )
+    }
+
     // Find all audio files in directory (non-recursive)
     private func findAudioFiles(in path: String) -> [String] {
         let fileManager = FileManager.default
@@ -126,14 +196,14 @@ class ShazamService {
     }
 
     // Detect a single file
-    private func detectFile(path: String) async -> ShazamResult {
+    func detectFile(path: String, startOffset: Double = 0.0, duration: Double = 10.0) async -> ShazamResult {
         let fileName = (path as NSString).lastPathComponent
         print("🎵 [SHAZAM] Starting detection for: \(fileName)")
 
         do {
             let audioURL = URL(fileURLWithPath: path)
             print("🎵 [SHAZAM] Creating signature...")
-            let signature = try await createSignature(from: audioURL)
+            let signature = try await createSignature(from: audioURL, startOffset: startOffset, duration: duration)
             print("🎵 [SHAZAM] Signature created successfully")
 
             // Use delegate pattern for ShazamKit with timeout
@@ -164,6 +234,8 @@ class ShazamService {
                                 continuation.resume(returning: ShazamResult(
                                     filePath: path,
                                     fileName: fileName,
+                                    allGenres: [],
+                                    needsGenreReview: false,
                                     matched: false,
                                     error: "No match found"
                                 ))
@@ -175,13 +247,19 @@ class ShazamService {
 
                             // Debug: Check what's available in mediaItem
                             print("   Genres array: \(mediaItem.genres)")
-                            let genre = mediaItem.genres.first
+                            let allGenres = mediaItem.genres
+                            let genre = allGenres.first
                             let year: String? = nil // ShazamKit doesn't provide year/release date
 
-                            if let genre = genre {
+                            // Determine if user needs to manually pick genre
+                            let needsGenreReview = allGenres.count > 1 || allGenres.isEmpty
+
+                            if allGenres.isEmpty {
+                                print("   ⚠️ No genre available - needs manual review")
+                            } else if allGenres.count > 1 {
+                                print("   ⚠️ Multiple genres available (\(allGenres.count)) - needs manual review: \(allGenres.joined(separator: ", "))")
+                            } else if let genre = genre {
                                 print("   Using Genre: \(genre)")
-                            } else {
-                                print("   ⚠️ No genre available")
                             }
 
                             continuation.resume(returning: ShazamResult(
@@ -191,6 +269,8 @@ class ShazamService {
                                 artist: mediaItem.artist,
                                 album: nil, // ShazamKit doesn't provide album
                                 genre: genre,
+                                allGenres: allGenres,
+                                needsGenreReview: needsGenreReview,
                                 year: year,
                                 matched: true,
                                 error: nil
@@ -207,6 +287,8 @@ class ShazamService {
                             continuation.resume(returning: ShazamResult(
                                 filePath: path,
                                 fileName: fileName,
+                                allGenres: [],
+                                needsGenreReview: false,
                                 matched: false,
                                 error: "No match found"
                             ))
@@ -222,6 +304,8 @@ class ShazamService {
                             continuation.resume(returning: ShazamResult(
                                 filePath: path,
                                 fileName: fileName,
+                                allGenres: [],
+                                needsGenreReview: false,
                                 matched: false,
                                 error: error.localizedDescription
                             ))
@@ -240,6 +324,8 @@ class ShazamService {
                     return ShazamResult(
                         filePath: path,
                         fileName: fileName,
+                        allGenres: [],
+                        needsGenreReview: false,
                         matched: false,
                         error: "Detection timeout"
                     )
@@ -252,6 +338,8 @@ class ShazamService {
                     return result ?? ShazamResult(
                         filePath: path,
                         fileName: fileName,
+                        allGenres: [],
+                        needsGenreReview: false,
                         matched: false,
                         error: "Unknown error"
                     )
@@ -260,6 +348,8 @@ class ShazamService {
                 return ShazamResult(
                     filePath: path,
                     fileName: fileName,
+                    allGenres: [],
+                    needsGenreReview: false,
                     matched: false,
                     error: "Task failed"
                 )
@@ -269,33 +359,43 @@ class ShazamService {
             return ShazamResult(
                 filePath: path,
                 fileName: fileName,
+                allGenres: [],
+                needsGenreReview: false,
                 matched: false,
                 error: error.localizedDescription
             )
         }
     }
 
-    private func createSignature(from url: URL) async throws -> SHSignature {
+    private func createSignature(from url: URL, startOffset: Double = 0.0, duration: Double = 10.0) async throws -> SHSignature {
         print("🎵 [SHAZAM] Opening audio file...")
         let audioFile = try AVAudioFile(forReading: url)
         let format = audioFile.processingFormat
         print("🎵 [SHAZAM] Audio format: \(format.sampleRate)Hz, \(format.channelCount) channels")
 
-        // ShazamKit only needs ~3-5 seconds of audio for recognition
-        // Limit to first 10 seconds to avoid overflow and improve performance
-        let maxSeconds: Double = 10.0
-        let maxFrames = AVAudioFrameCount(format.sampleRate * maxSeconds)
-        let frameCount = min(AVAudioFrameCount(audioFile.length), maxFrames)
-        print("🎵 [SHAZAM] Using \(frameCount) frames (~\(Double(frameCount) / format.sampleRate) seconds)")
+        // Calculate start frame and duration
+        let startFrame = AVAudioFramePosition(format.sampleRate * startOffset)
+        let maxFrames = AVAudioFrameCount(format.sampleRate * duration)
+        let totalLength = audioFile.length
+
+        // Ensure we don't read beyond file length
+        let actualStartFrame = min(startFrame, totalLength - 1)
+        let remainingFrames = AVAudioFrameCount(totalLength - actualStartFrame)
+        let frameCount = min(maxFrames, remainingFrames)
+
+        print("🎵 [SHAZAM] Starting at \(startOffset)s, reading \(duration)s (~\(Double(frameCount) / format.sampleRate) seconds actual)")
 
         guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount) else {
             print("❌ [SHAZAM] Failed to create audio buffer")
             throw NSError(domain: "ShazamService", code: 1, userInfo: [NSLocalizedDescriptionKey: "Failed to create audio buffer"])
         }
 
-        // Read only the needed frames
+        // Seek to start position
+        audioFile.framePosition = actualStartFrame
+
+        // Read the needed frames
         buffer.frameLength = frameCount
-        print("🎵 [SHAZAM] Reading audio data...")
+        print("🎵 [SHAZAM] Reading audio data from \(actualStartFrame)...")
         try audioFile.read(into: buffer, frameCount: frameCount)
         print("🎵 [SHAZAM] Audio data read successfully")
 
@@ -350,26 +450,34 @@ class ShazamService {
         let directory = fileURL.deletingLastPathComponent()
         let ext = fileURL.pathExtension
 
-        // Generate new filename
-        let newName = generateFilename(from: result, extension: ext)
-        let newURL = directory.appendingPathComponent(newName)
-
-        // Check if file already exists
-        if FileManager.default.fileExists(atPath: newURL.path) && newURL.path != fileURL.path {
-            // File exists, skip rename
-            return
-        }
-
         do {
-            // Save metadata first
+            // Step 1: Save metadata first (before renaming)
+            print("💾 [SHAZAM] Saving metadata for: \(result.fileName)")
             try await saveMetadata(result: result, to: fileURL)
+            print("✅ [SHAZAM] Metadata saved successfully")
 
-            // Then rename file
+            // Step 2: Generate new filename and rename
+            let newName = generateFilename(from: result, extension: ext)
+            let newURL = directory.appendingPathComponent(newName)
+
+            // Check if file already exists
+            if FileManager.default.fileExists(atPath: newURL.path) && newURL.path != fileURL.path {
+                print("⚠️ [SHAZAM] File already exists, skipping rename: \(newName)")
+                return
+            }
+
+            // Rename file
             if newURL.path != fileURL.path {
                 try FileManager.default.moveItem(at: fileURL, to: newURL)
+                print("✅ [SHAZAM] Renamed to: \(newName)")
+
+                // Notify that file was renamed
+                await MainActor.run {
+                    onFileRenamed?()
+                }
             }
         } catch {
-            print("Error renaming/saving: \(error)")
+            print("❌ [SHAZAM] Error saving metadata/renaming: \(error.localizedDescription)")
         }
     }
 
@@ -409,28 +517,36 @@ class ShazamService {
     private func saveMetadata(result: ShazamResult, to url: URL) async throws {
         let asset = AVURLAsset(url: url)
 
-        // Prepare metadata items
-        var metadataItems: [AVMutableMetadataItem] = []
+        // Prepare metadata items using common key format (same as MetadataEditor)
+        var metadataItems: [AVMetadataItem] = []
+
+        func addMetadata(key: AVMetadataKey, value: String) {
+            guard !value.isEmpty else { return }
+            let item = AVMutableMetadataItem()
+            item.keySpace = .common
+            item.key = key as NSString
+            item.value = value as NSString
+            metadataItems.append(item)
+        }
 
         if let title = result.title {
-            let item = AVMutableMetadataItem()
-            item.identifier = .commonIdentifierTitle
-            item.value = title as NSString
-            metadataItems.append(item)
+            addMetadata(key: .commonKeyTitle, value: title)
         }
 
         if let artist = result.artist {
-            let item = AVMutableMetadataItem()
-            item.identifier = .commonIdentifierArtist
-            item.value = artist as NSString
-            metadataItems.append(item)
+            addMetadata(key: .commonKeyArtist, value: artist)
         }
 
         if let album = result.album {
-            let item = AVMutableMetadataItem()
-            item.identifier = .commonIdentifierAlbumName
-            item.value = album as NSString
-            metadataItems.append(item)
+            addMetadata(key: .commonKeyAlbumName, value: album)
+        }
+
+        if let genre = result.genre {
+            addMetadata(key: .commonKeyType, value: genre)
+        }
+
+        if let year = result.year {
+            addMetadata(key: .commonKeyCreationDate, value: year)
         }
 
         // Export with new metadata
@@ -438,10 +554,12 @@ class ShazamService {
             throw NSError(domain: "ShazamService", code: 2, userInfo: [NSLocalizedDescriptionKey: "Failed to create export session"])
         }
 
-        let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        // Create temporary file with same extension
+        let tempURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension(url.pathExtension)
 
         exportSession.metadata = metadataItems
-        exportSession.outputURL = tempURL
 
         // Determine output file type based on extension
         let ext = url.pathExtension.lowercased()
@@ -449,9 +567,9 @@ class ShazamService {
         switch ext {
         case "mp3":
             outputFileType = .mp3
-        case "m4a":
+        case "m4a", "m4b":
             outputFileType = .m4a
-        case "mp4":
+        case "mp4", "m4v":
             outputFileType = .mp4
         case "mov":
             outputFileType = .mov
@@ -463,10 +581,12 @@ class ShazamService {
             outputFileType = .mp4
         }
 
-        exportSession.outputFileType = outputFileType
+        print("💾 [METADATA] Saving: Title=\(result.title ?? "nil"), Artist=\(result.artist ?? "nil"), Genre=\(result.genre ?? "nil")")
 
         try await exportSession.export(to: tempURL, as: outputFileType)
         try FileManager.default.removeItem(at: url)
         try FileManager.default.moveItem(at: tempURL, to: url)
+
+        print("✅ [METADATA] Saved successfully")
     }
 }

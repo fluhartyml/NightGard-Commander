@@ -1,29 +1,28 @@
 //
-//  BatchShazamDialog.swift
+//  BatchITunesDialog.swift
 //  NightGard Commander
 //
-//  Created by Michael Fluharty with Claude on 2025 Nov 18 1055
+//  Created by Michael Fluharty with Claude on 2025 Nov 19 1150
 //
 
 import SwiftUI
 
-struct BatchShazamDialog: View {
+struct BatchITunesDialog: View {
     @Binding var isPresented: Bool
     let folderPath: String
     let folderName: String
-    let onFileRenamed: (() -> Void)?
-    @State private var service = ShazamService()
+    let onFileUpdated: (() -> Void)?
+    @State private var service = iTunesSearchService()
     @State private var showResults = false
-    @State private var showUnifiedQueue = false
 
     var body: some View {
         VStack(spacing: 20) {
             // Title with spinner
             HStack {
-                Image(systemName: "shazam.logo.fill")
+                Image(systemName: "music.note.list")
                     .font(.title)
-                    .foregroundColor(.blue)
-                Text("Shazaming Folder")
+                    .foregroundColor(.purple)
+                Text("iTunes Metadata Lookup")
                     .font(.title2)
                     .fontWeight(.semibold)
 
@@ -55,7 +54,7 @@ struct BatchShazamDialog: View {
 
                 // Currently processing
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Currently detecting:")
+                    Text("Currently looking up:")
                         .font(.caption)
                         .foregroundColor(.secondary)
 
@@ -71,12 +70,12 @@ struct BatchShazamDialog: View {
                 // Stats
                 HStack(spacing: 24) {
                     StatView(icon: "checkmark.circle.fill", color: .green, label: "Matched", value: service.matchedCount)
-                    StatView(icon: "pencil.circle.fill", color: .purple, label: "Review", value: service.genreReviewCount)
-                    StatView(icon: "exclamationmark.triangle.fill", color: .orange, label: "Queued", value: service.queuedCount)
+                    StatView(icon: "exclamationmark.triangle.fill", color: .orange, label: "Not Found", value: service.unmatchedCount)
 
                     if service.totalFiles > 0 {
                         let remaining = service.totalFiles - service.processedFiles
-                        let estimatedMinutes = remaining * 7 / 60 // ~7 seconds per file
+                        let estimatedSeconds = remaining * 2 // ~2 seconds per file (API calls)
+                        let estimatedMinutes = estimatedSeconds / 60
                         StatView(icon: "clock.fill", color: .blue, label: "Remaining", value: estimatedMinutes, suffix: "min")
                     }
                 }
@@ -97,28 +96,17 @@ struct BatchShazamDialog: View {
             startProcessing()
         }
         .sheet(isPresented: $showResults) {
-            ShazamResultsDialog(
+            ITunesResultsDialog(
                 isPresented: $showResults,
                 matchedCount: service.matchedCount,
-                genreReviewCount: service.genreReviewCount,
-                queuedCount: service.queuedCount,
-                onViewQueue: {
-                    showResults = false
-                    showUnifiedQueue = true
-                }
-            )
-        }
-        .sheet(isPresented: $showUnifiedQueue) {
-            UnifiedQueueReviewPanel(
-                isPresented: $showUnifiedQueue,
-                onFileRenamed: onFileRenamed
+                unmatchedCount: service.unmatchedCount
             )
         }
     }
 
     private func startProcessing() {
-        // Set up file rename callback
-        service.onFileRenamed = onFileRenamed
+        // Set up file update callback
+        service.onFileUpdated = onFileUpdated
 
         Task {
             await service.processFolder(path: folderPath)
@@ -133,44 +121,12 @@ struct BatchShazamDialog: View {
     }
 }
 
-// Stat display view
-struct StatView: View {
-    let icon: String
-    let color: Color
-    let label: String
-    let value: Int
-    var suffix: String = ""
-
-    var body: some View {
-        VStack(spacing: 4) {
-            Image(systemName: icon)
-                .foregroundColor(color)
-                .font(.title2)
-
-            if suffix.isEmpty {
-                Text("\(value)")
-                    .font(.title3)
-                    .fontWeight(.semibold)
-            } else {
-                Text("\(value) \(suffix)")
-                    .font(.title3)
-                    .fontWeight(.semibold)
-            }
-
-            Text(label)
-                .font(.caption)
-                .foregroundColor(.secondary)
-        }
-        .frame(maxWidth: .infinity)
-    }
-}
-
 #Preview {
     @Previewable @State var isPresented = true
-    BatchShazamDialog(
+    BatchITunesDialog(
         isPresented: $isPresented,
         folderPath: "/Users/test/Music",
         folderName: "My Music",
-        onFileRenamed: nil
+        onFileUpdated: nil
     )
 }
