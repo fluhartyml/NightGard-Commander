@@ -192,7 +192,14 @@ struct FileBrowserPanel: View {
                 .help("Create Apple Music Link File")
 
                 // Shazam folder button
-                Menu {
+                Button(action: {
+                    triggerShazamFolder()
+                }) {
+                    Image(systemName: "shazam.logo.fill")
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.blue)
+                .contextMenu {
                     Button(action: {
                         showBatchShazam = true
                     }) {
@@ -213,15 +220,8 @@ struct FileBrowserPanel: View {
                     }) {
                         Label("Shazam Settings...", systemImage: "gear")
                     }
-                } label: {
-                    Image(systemName: "shazam.logo.fill")
-                        .foregroundColor(.blue)
-                } primaryAction: {
-                    triggerShazamFolder()
                 }
-                .menuStyle(.borderlessButton)
-                .frame(width: 30)
-                .help("Shazam all audio files in current folder (click and hold for options)")
+                .help("Shazam all audio files in current folder (right-click for options)")
 
                 if fileSystem.canNavigateUp() {
                     Button(action: {
@@ -722,7 +722,10 @@ struct FileBrowserPanel: View {
             BatchShazamDialog(
                 isPresented: $showBatchShazam,
                 folderPath: fileSystem.currentPath,
-                folderName: (fileSystem.currentPath as NSString).lastPathComponent
+                folderName: (fileSystem.currentPath as NSString).lastPathComponent,
+                onFileRenamed: {
+                    fileSystem.loadFiles()
+                }
             )
         }
         .sheet(isPresented: $showQueueReview) {

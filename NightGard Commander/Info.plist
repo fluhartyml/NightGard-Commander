@@ -5,8 +5,7 @@
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>remote-notification</string>
+		<string>audio</string>
 	</array>
-	<key>NSAppleMusicUsageDescription</key>
-	<string>NightGard Commander needs access to Apple Music to play your music links and videos.</string>
 </dict>
 </plist>

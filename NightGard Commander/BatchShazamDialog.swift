@@ -11,6 +11,7 @@ struct BatchShazamDialog: View {
     @Binding var isPresented: Bool
     let folderPath: String
     let folderName: String
+    let onFileRenamed: (() -> Void)?
     @State private var service = ShazamService()
     @State private var showResults = false
 
@@ -108,6 +109,9 @@ struct BatchShazamDialog: View {
     }
 
     private func startProcessing() {
+        // Set up file rename callback
+        service.onFileRenamed = onFileRenamed
+
         Task {
             await service.processFolder(path: folderPath)
 
@@ -158,6 +162,7 @@ struct StatView: View {
     BatchShazamDialog(
         isPresented: $isPresented,
         folderPath: "/Users/test/Music",
-        folderName: "My Music"
+        folderName: "My Music",
+        onFileRenamed: nil
     )
 }
