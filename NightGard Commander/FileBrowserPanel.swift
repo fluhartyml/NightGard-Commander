@@ -222,7 +222,7 @@ struct FileBrowserPanel: View {
                         Label("Shazam Settings...", systemImage: "gear")
                     }
                 }
-                .help("Shazam all audio files in current folder (right-click for options)")
+                .help("Click to Shazam current folder | Right-click for settings & queue")
 
                 // iTunes Lookup button
                 Button(action: {
@@ -232,7 +232,20 @@ struct FileBrowserPanel: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(.purple)
-                .help("Complete metadata using iTunes Store database")
+                .contextMenu {
+                    Button(action: {
+                        showBatchITunes = true
+                    }) {
+                        Label("Search iTunes for Current Folder", systemImage: "folder.fill")
+                    }
+
+                    Button(action: {
+                        showQueueReview = true
+                    }) {
+                        Label("Review Queue (\(ShazamQueue.shared.items.count + GenreReviewQueue.shared.items.count))", systemImage: "list.bullet")
+                    }
+                }
+                .help("Click to search iTunes for current file | Right-click for batch search & queue")
 
                 if fileSystem.canNavigateUp() {
                     Button(action: {
@@ -366,6 +379,19 @@ struct FileBrowserPanel: View {
                                 Image(systemName: icon.name)
                                     .foregroundColor(icon.color)
                                     .frame(width: 20)
+
+                                // Play button for media files
+                                if isMediaFile(item) {
+                                    Button(action: {
+                                        onItemDoubleClick(item)
+                                    }) {
+                                        Image(systemName: "play.circle.fill")
+                                            .font(.system(size: 14))
+                                            .foregroundColor(.blue)
+                                    }
+                                    .buttonStyle(.plain)
+                                    .help("Play")
+                                }
 
                                 if renamingItem?.id == item.id {
                                     TextField("Name", text: $renameText)
@@ -801,11 +827,14 @@ struct FileBrowserPanel: View {
     // MARK: - Shazam Integration
 
     private func triggerShazamFolder() {
+        print("🔵 [SHAZAM BUTTON] Clicked!")
         // Check if user has configured Shazam settings (first-run check)
         if !ShazamSettings.shared.isConfigured {
+            print("⚙️ [SHAZAM] Not configured, showing settings")
             // Show settings panel first
             showShazamSettings = true
         } else {
+            print("▶️ [SHAZAM] Starting batch scan")
             // Start batch Shazam
             showBatchShazam = true
         }

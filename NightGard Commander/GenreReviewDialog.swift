@@ -302,6 +302,15 @@ struct GenreReviewDialog: View {
     }
 
     private func saveMetadataToFile(result: ShazamResult, url: URL) async throws {
+        let ext = url.pathExtension.lowercased()
+
+        // MP3 files: Skip metadata writing (AVAssetExportSession doesn't support MP3 output)
+        // Genre is already in filename, so just return success
+        if ext == "mp3" {
+            print("💾 [GENRE] Skipping metadata write for MP3 (not supported by AVAssetExportSession)")
+            return
+        }
+
         let asset = AVURLAsset(url: url)
 
         // Prepare metadata items
@@ -348,11 +357,8 @@ struct GenreReviewDialog: View {
         exportSession.metadata = metadataItems
 
         // Determine output file type
-        let ext = url.pathExtension.lowercased()
         let outputFileType: AVFileType
         switch ext {
-        case "mp3":
-            outputFileType = .mp3
         case "m4a", "m4b":
             outputFileType = .m4a
         case "mp4", "m4v":

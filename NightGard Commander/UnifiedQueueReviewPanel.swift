@@ -19,6 +19,7 @@ struct UnifiedQueueReviewPanel: View {
     @State private var unmatchedQueue = ShazamQueue.shared
     @State private var genreQueue = GenreReviewQueue.shared
     @State private var selectedTab = 0
+    @State private var audioPlayer: AVAudioPlayer?
     let onFileRenamed: (() -> Void)?
 
     var unmatchedCount: Int {
@@ -89,6 +90,9 @@ struct UnifiedQueueReviewPanel: View {
                                     },
                                     onRemove: {
                                         genreQueue.remove(id: item.id)
+                                    },
+                                    onPlay: { filePath in
+                                        playAudioFile(path: filePath)
                                     }
                                 )
                             }
@@ -118,6 +122,9 @@ struct UnifiedQueueReviewPanel: View {
                                     },
                                     onRemove: {
                                         unmatchedQueue.remove(id: item.id)
+                                    },
+                                    onPlay: { filePath in
+                                        playAudioFile(path: filePath)
                                     }
                                 )
                             }
@@ -141,9 +148,26 @@ struct UnifiedQueueReviewPanel: View {
                     .tint(.red)
                 } else if selectedTab == 1 && !unmatchedQueue.items.isEmpty {
                     Button(action: {
+                        deepDiveAll()
+                    }) {
+                        Label("Deep Dive All (\(unmatchedQueue.items.count))", systemImage: "magnifyingglass.circle.fill")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.purple)
+                    .help("Sample multiple positions in all files (30s, 60s, 90s, 120s)")
+
+                    Button(action: {
+                        moveUnmatchedToFolder()
+                    }) {
+                        Label("Move All to Folder", systemImage: "folder.badge.plus")
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(.blue)
+
+                    Button(action: {
                         unmatchedQueue.removeAll()
                     }) {
-                        Label("Clear Unmatched Queue", systemImage: "trash")
+                        Label("Clear Queue", systemImage: "trash")
                     }
                     .buttonStyle(.bordered)
                     .tint(.red)
@@ -174,6 +198,145 @@ struct UnifiedQueueReviewPanel: View {
                 .font(.caption)
                 .foregroundColor(.secondary)
             Spacer()
+        }
+    }
+
+    private func playAudioFile(path: String) {
+        let url = URL(fileURLWithPath: path)
+
+        do {
+            // Stop current playback if any
+            audioPlayer?.stop()
+
+            // Create new player
+            audioPlayer = try AVAudioPlayer(contentsOf: url)
+            audioPlayer?.play()
+
+            print("▶️ [PLAY] Playing: \(url.lastPathComponent)")
+        } catch {
+            print("❌ [PLAY] Error playing audio: \(error)")
+        }
+    }
+
+    private func moveUnmatchedToFolder() {
+        guard !unmatchedQueue.items.isEmpty else { return }
+
+        // Get the directory from the first file
+        guard let firstFile = unmatchedQueue.items.first else { return }
+        let sourceURL = URL(fileURLWithPath: firstFile.filePath)
+        let parentDirectory = sourceURL.deletingLastPathComponent()
+
+        // Create "Quarantine" folder for problem files
+        let unmatchedFolderURL = parentDirectory.appendingPathComponent("Quarantine")
+
+        do {
+            // Create folder if it doesn't exist
+            if !FileManager.default.fileExists(atPath: unmatchedFolderURL.path) {
+                try FileManager.default.createDirectory(at: unmatchedFolderURL, withIntermediateDirectories: false)
+                print("📁 [MOVE] Created folder: \(unmatchedFolderURL.path)")
+            }
+
+            var movedCount = 0
+            var failedCount = 0
+
+            // Move all unmatched files
+            for item in unmatchedQueue.items {
+                let fileURL = URL(fileURLWithPath: item.filePath)
+                let fileName = fileURL.lastPathComponent
+                let destinationURL = unmatchedFolderURL.appendingPathComponent(fileName)
+
+                // Check if file exists at destination
+                if FileManager.default.fileExists(atPath: destinationURL.path) {
+                    print("⚠️ [MOVE] File already exists at destination: \(fileName)")
+                    failedCount += 1
+                    continue
+                }
+
+                do {
+                    try FileManager.default.moveItem(at: fileURL, to: destinationURL)
+                    movedCount += 1
+                    print("✅ [MOVE] Moved: \(fileName)")
+                } catch {
+                    print("❌ [MOVE] Failed to move \(fileName): \(error)")
+                    failedCount += 1
+                }
+            }
+
+            print("📊 [MOVE] Complete: \(movedCount) moved, \(failedCount) failed")
+
+            // Clear the queue after successful moves
+            if movedCount > 0 {
+                unmatchedQueue.removeAll()
+                onFileRenamed?() // Refresh the file browser
+            }
+
+        } catch {
+            print("❌ [MOVE] Failed to create folder: \(error)")
+        }
+    }
+
+    private func deepDiveAll() {
+        Task {
+            print("🔍 [DEEP DIVE ALL] Starting deep dive for \(unmatchedQueue.items.count) files...")
+
+            let itemsToProcess = unmatchedQueue.items
+            var successCount = 0
+            var stillFailedCount = 0
+
+            for item in itemsToProcess {
+                print("🔍 [DEEP DIVE ALL] Processing: \(item.fileName)")
+                let service = ShazamService()
+                let result = await service.detectFileDeepDive(path: item.filePath)
+
+                await MainActor.run {
+                    if result.matched {
+                        successCount += 1
+                        unmatchedQueue.remove(id: item.id)
+
+                        if result.needsGenreReview {
+                            genreQueue.add(result: result)
+                            print("✅ [DEEP DIVE ALL] Matched! Added to genre review")
+                        } else {
+                            print("✅ [DEEP DIVE ALL] Matched with clear genre!")
+                            Task {
+                                let reviewItem = GenreReviewItem(
+                                    filePath: result.filePath,
+                                    fileName: result.fileName,
+                                    title: result.title,
+                                    artist: result.artist,
+                                    album: result.album,
+                                    allGenres: result.allGenres,
+                                    selectedGenre: result.genre
+                                )
+                                await renameFileWithGenre(item: reviewItem, genre: result.genre ?? "Unknown")
+                            }
+                        }
+                    } else {
+                        stillFailedCount += 1
+                        print("❌ [DEEP DIVE ALL] Still no match for: \(item.fileName)")
+                        // Update error in queue (add method auto-increments attempt count)
+                        unmatchedQueue.add(
+                            filePath: item.filePath,
+                            fileName: item.fileName,
+                            error: "Deep dive failed: No match at any position"
+                        )
+                    }
+                }
+
+                // Small delay between files to avoid overwhelming the API
+                try? await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
+            }
+
+            await MainActor.run {
+                print("📊 [DEEP DIVE ALL] Complete: \(successCount) matched, \(stillFailedCount) still unmatched")
+                if successCount > 0 {
+                    onFileRenamed?() // Refresh file browser
+                    // Switch to genre tab if we added any genre review items
+                    if genreQueue.items.count > 0 {
+                        selectedTab = 0
+                    }
+                }
+            }
         }
     }
 
@@ -220,18 +383,12 @@ struct UnifiedQueueReviewPanel: View {
                     }
                 } else {
                     print("❌ [RETRY] Still no match")
-                    // Update error message in queue
-                    if let index = unmatchedQueue.items.firstIndex(where: { $0.id == item.id }) {
-                        var updatedItem = unmatchedQueue.items[index]
-                        updatedItem.attemptCount += 1
-                        updatedItem.lastError = result.error
-                        // Can't directly modify - need to use queue's add method
-                        unmatchedQueue.add(
-                            filePath: updatedItem.filePath,
-                            fileName: updatedItem.fileName,
-                            error: result.error
-                        )
-                    }
+                    // Update error message in queue (add method auto-increments attempt count)
+                    unmatchedQueue.add(
+                        filePath: item.filePath,
+                        fileName: item.fileName,
+                        error: result.error
+                    )
                 }
             }
         }
@@ -239,6 +396,8 @@ struct UnifiedQueueReviewPanel: View {
 
     private func applyGenreSelection(item: GenreReviewItem, genre: String) {
         Task {
+            print("🎯 [GENRE APPLY] Starting for: \(item.fileName) with genre: \(genre)")
+
             // Update the queue with selected genre
             genreQueue.updateGenre(id: item.id, genre: genre)
 
@@ -252,6 +411,8 @@ struct UnifiedQueueReviewPanel: View {
                 // Notify file was renamed
                 onFileRenamed?()
             }
+
+            print("✅ [GENRE APPLY] Complete")
         }
     }
 
@@ -276,14 +437,22 @@ struct UnifiedQueueReviewPanel: View {
         )
 
         do {
+            // Check if file exists first
+            guard FileManager.default.fileExists(atPath: item.filePath) else {
+                print("❌ [GENRE] File doesn't exist: \(item.filePath)")
+                return
+            }
+
             // Step 1: Save metadata to the file with selected genre
-            print("💾 [GENRE] Saving metadata with genre '\(genre)'")
+            print("💾 [GENRE] Saving metadata with genre '\(genre)' to: \(item.fileName)")
             try await saveMetadataToFile(result: result, url: fileURL)
             print("✅ [GENRE] Metadata saved successfully")
 
             // Step 2: Rename file
             let newName = generateFilename(from: result, extension: ext)
             let newURL = directory.appendingPathComponent(newName)
+
+            print("📝 [GENRE] Generated filename: \(newName)")
 
             // Check if file already exists
             if FileManager.default.fileExists(atPath: newURL.path) && newURL.path != fileURL.path {
@@ -294,13 +463,25 @@ struct UnifiedQueueReviewPanel: View {
             if newURL.path != fileURL.path {
                 try FileManager.default.moveItem(at: fileURL, to: newURL)
                 print("✅ [GENRE] Renamed to: \(newName)")
+            } else {
+                print("ℹ️ [GENRE] Filename unchanged: \(newName)")
             }
         } catch {
-            print("❌ [GENRE] Error: \(error)")
+            print("❌ [GENRE] Error: \(error.localizedDescription)")
+            print("❌ [GENRE] Full error: \(error)")
         }
     }
 
     private func saveMetadataToFile(result: ShazamResult, url: URL) async throws {
+        let ext = url.pathExtension.lowercased()
+
+        // MP3 files: Skip metadata writing (AVAssetExportSession doesn't support MP3 output)
+        // Genre is already in filename, so just return success
+        if ext == "mp3" {
+            print("💾 [GENRE] Skipping metadata write for MP3 (not supported by AVAssetExportSession)")
+            return
+        }
+
         let asset = AVURLAsset(url: url)
 
         // Prepare metadata items
@@ -347,11 +528,8 @@ struct UnifiedQueueReviewPanel: View {
         exportSession.metadata = metadataItems
 
         // Determine output file type
-        let ext = url.pathExtension.lowercased()
         let outputFileType: AVFileType
         switch ext {
-        case "mp3":
-            outputFileType = .mp3
         case "m4a", "m4b":
             outputFileType = .m4a
         case "mp4", "m4v":
@@ -410,67 +588,82 @@ struct GenreSelectionRow: View {
     let item: GenreReviewItem
     let onApply: (String) -> Void
     let onRemove: () -> Void
+    let onPlay: (String) -> Void
 
     @State private var selectedGenre: String
     @State private var isExpanded = false
     @State private var customGenre = ""
     @State private var isProcessing = false
 
-    init(item: GenreReviewItem, onApply: @escaping (String) -> Void, onRemove: @escaping () -> Void) {
+    init(item: GenreReviewItem, onApply: @escaping (String) -> Void, onRemove: @escaping () -> Void, onPlay: @escaping (String) -> Void) {
         self.item = item
         self.onApply = onApply
         self.onRemove = onRemove
+        self.onPlay = onPlay
         _selectedGenre = State(initialValue: item.selectedGenre ?? item.allGenres.first ?? "")
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            // Header row
-            HStack(spacing: 12) {
-                // Music icon
-                Image(systemName: "music.note")
-                    .font(.title2)
-                    .foregroundColor(.purple)
-                    .frame(width: 32)
-
-                // Song info
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(item.title ?? "Unknown Title")
-                        .font(.headline)
-                        .lineLimit(1)
-
-                    HStack(spacing: 4) {
-                        if let artist = item.artist {
-                            Text(artist)
-                                .font(.subheadline)
-                                .foregroundColor(.secondary)
-                        }
-                        if item.allGenres.count > 0 {
-                            Text("• \(item.allGenres.count) genres")
-                                .font(.caption)
-                                .foregroundColor(.purple)
-                        }
-                    }
-
-                    Text(item.fileName)
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                        .lineLimit(1)
+            // Header row - make entire row clickable
+            Button(action: {
+                withAnimation {
+                    isExpanded.toggle()
                 }
+            }) {
+                HStack(spacing: 12) {
+                    // Music icon
+                    Image(systemName: "music.note")
+                        .font(.title2)
+                        .foregroundColor(.purple)
+                        .frame(width: 32)
 
-                Spacer()
+                    // Song info
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(item.title ?? "Unknown Title")
+                            .font(.headline)
+                            .lineLimit(1)
+                            .foregroundColor(.primary)
 
-                // Expand/collapse button
-                Button(action: {
-                    withAnimation {
-                        isExpanded.toggle()
+                        HStack(spacing: 4) {
+                            if let artist = item.artist {
+                                Text(artist)
+                                    .font(.subheadline)
+                                    .foregroundColor(.secondary)
+                            }
+                            if item.allGenres.count > 0 {
+                                Text("• \(item.allGenres.count) genres")
+                                    .font(.caption)
+                                    .foregroundColor(.purple)
+                            }
+                        }
+
+                        Text(item.fileName)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
                     }
-                }) {
+
+                    Spacer()
+
+                    // Play button (always visible)
+                    Button(action: {
+                        onPlay(item.filePath)
+                    }) {
+                        Image(systemName: "play.circle.fill")
+                            .font(.title2)
+                            .foregroundColor(.blue)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Play preview")
+
+                    // Expand/collapse chevron
                     Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
                         .foregroundColor(.secondary)
+                        .font(.title3)
                 }
-                .buttonStyle(.plain)
             }
+            .buttonStyle(.plain)
 
             // Expanded content
             if isExpanded {
@@ -582,53 +775,67 @@ struct UnmatchedItemRow: View {
     let onRetry: () -> Void
     let onDeepDive: () -> Void
     let onRemove: () -> Void
+    let onPlay: (String) -> Void
 
     @State private var isExpanded = false
     @State private var isProcessing = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            // Header row
-            HStack(spacing: 12) {
-                // Warning icon
-                Image(systemName: "exclamationmark.triangle")
-                    .font(.title2)
-                    .foregroundColor(.orange)
-                    .frame(width: 32)
-
-                // File info
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(item.fileName)
-                        .font(.body)
-                        .lineLimit(1)
-
-                    if let error = item.lastError {
-                        Text(error)
-                            .font(.caption)
-                            .foregroundColor(.red)
-                            .lineLimit(1)
-                    }
-
-                    if item.attemptCount > 1 {
-                        Text("Attempts: \(item.attemptCount)")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                    }
+            // Header row - make entire row clickable
+            Button(action: {
+                withAnimation {
+                    isExpanded.toggle()
                 }
+            }) {
+                HStack(spacing: 12) {
+                    // Warning icon
+                    Image(systemName: "exclamationmark.triangle")
+                        .font(.title2)
+                        .foregroundColor(.orange)
+                        .frame(width: 32)
 
-                Spacer()
+                    // File info
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(item.fileName)
+                            .font(.body)
+                            .lineLimit(1)
+                            .foregroundColor(.primary)
 
-                // Expand/collapse button
-                Button(action: {
-                    withAnimation {
-                        isExpanded.toggle()
+                        if let error = item.lastError {
+                            Text(error)
+                                .font(.caption)
+                                .foregroundColor(.red)
+                                .lineLimit(1)
+                        }
+
+                        if item.attemptCount > 1 {
+                            Text("Attempts: \(item.attemptCount)")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
                     }
-                }) {
+
+                    Spacer()
+
+                    // Play button (always visible)
+                    Button(action: {
+                        onPlay(item.filePath)
+                    }) {
+                        Image(systemName: "play.circle.fill")
+                            .font(.title2)
+                            .foregroundColor(.blue)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Play preview")
+
+                    // Expand/collapse chevron
                     Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
                         .foregroundColor(.secondary)
+                        .font(.title3)
                 }
-                .buttonStyle(.plain)
             }
+            .buttonStyle(.plain)
 
             // Expanded content
             if isExpanded {
