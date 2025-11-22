@@ -58,12 +58,16 @@ struct ContentView: View {
     @State private var showLeftMediaPlayer = false
     @State private var autoPlayNextLeft = true
     @State private var autoPlayOppositeLeft = false
+    @State private var shouldAutoPlayLeft = false
+    @State private var isLeftPlaying = false
 
     // Right pane media player state
     @State private var rightCurrentMedia: FileItem?
     @State private var showRightMediaPlayer = false
     @State private var autoPlayNextRight = true
     @State private var autoPlayOppositeRight = false
+    @State private var shouldAutoPlayRight = false
+    @State private var isRightPlaying = false
 
     var activeFocusedFileSystem: FileSystemService {
         focusedPane == .left ? leftFileSystem : rightFileSystem
@@ -158,13 +162,15 @@ struct ContentView: View {
     }
 
     func startPlayingMedia(item: FileItem) {
-        // Set media for the appropriate pane
+        // Set media for the appropriate pane and auto-play
         if focusedPane == .left {
             leftCurrentMedia = item
             showLeftMediaPlayer = true
+            shouldAutoPlayLeft = true  // Auto-play on double-click/Enter
         } else {
             rightCurrentMedia = item
             showRightMediaPlayer = true
+            shouldAutoPlayRight = true  // Auto-play on double-click/Enter
         }
     }
 
@@ -177,6 +183,7 @@ struct ContentView: View {
         if let first = rightMedia.first {
             rightCurrentMedia = first
             showRightMediaPlayer = true
+            shouldAutoPlayRight = true  // Auto-play when switching panes
         }
     }
 
@@ -189,6 +196,7 @@ struct ContentView: View {
         if let first = leftMedia.first {
             leftCurrentMedia = first
             showLeftMediaPlayer = true
+            shouldAutoPlayLeft = true  // Auto-play when switching panes
         }
     }
 
@@ -365,6 +373,8 @@ struct ContentView: View {
                         showMediaPlayer: $showLeftMediaPlayer,
                         autoPlayNext: $autoPlayNextLeft,
                         autoPlayOpposite: $autoPlayOppositeLeft,
+                        shouldAutoPlay: $shouldAutoPlayLeft,
+                        isCurrentlyPlaying: $isLeftPlaying,
                         onSwitchToOpposite: switchLeftToRight,
                         otherPanePath: rightFileSystem.currentPath,
                         onRefreshOtherPane: {
@@ -434,6 +444,8 @@ struct ContentView: View {
                         showMediaPlayer: $showRightMediaPlayer,
                         autoPlayNext: $autoPlayNextRight,
                         autoPlayOpposite: $autoPlayOppositeRight,
+                        shouldAutoPlay: $shouldAutoPlayRight,
+                        isCurrentlyPlaying: $isRightPlaying,
                         onSwitchToOpposite: switchRightToLeft,
                         otherPanePath: leftFileSystem.currentPath,
                         onRefreshOtherPane: {
@@ -567,30 +579,84 @@ struct ContentView: View {
             // Wire up hardware media key controls
             mediaKeyHandler.onPlayPause = {
                 // Toggle play/pause for whichever pane is currently playing
-                if self.showLeftMediaPlayer {
-                    self.showLeftMediaPlayer.toggle()
-                } else if self.showRightMediaPlayer {
-                    self.showRightMediaPlayer.toggle()
+                if self.isLeftPlaying {
+                    // Toggle left playback state
+                    self.isLeftPlaying = false
+                    self.shouldAutoPlayLeft = false
+                    // Force refresh
+                    let media = self.leftCurrentMedia
+                    self.leftCurrentMedia = nil
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                        self.leftCurrentMedia = media
+                    }
+                } else if self.isRightPlaying {
+                    // Toggle right playback state
+                    self.isRightPlaying = false
+                    self.shouldAutoPlayRight = false
+                    // Force refresh
+                    let media = self.rightCurrentMedia
+                    self.rightCurrentMedia = nil
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                        self.rightCurrentMedia = media
+                    }
+                } else if self.showLeftMediaPlayer && self.leftCurrentMedia != nil {
+                    // Left player visible but paused - start playing
+                    self.isLeftPlaying = true
+                    self.shouldAutoPlayLeft = true
+                    let media = self.leftCurrentMedia
+                    self.leftCurrentMedia = nil
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                        self.leftCurrentMedia = media
+                    }
+                } else if self.showRightMediaPlayer && self.rightCurrentMedia != nil {
+                    // Right player visible but paused - start playing
+                    self.isRightPlaying = true
+                    self.shouldAutoPlayRight = true
+                    let media = self.rightCurrentMedia
+                    self.rightCurrentMedia = nil
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                        self.rightCurrentMedia = media
+                    }
                 }
             }
 
             mediaKeyHandler.onNext = {
-                // Play next track in focused pane
-                // This will be similar to Space key behavior
-                if self.focusedPane == .left {
-                    // TODO: Add next track function for left pane
-                } else {
-                    // TODO: Add next track function for right pane
-                }
+                // Play next track in the pane that's currently playing or visible
+                // Simulate down arrow press when playing
+                print("⏭️ Media key: Next track")
+                // This functionality is handled by arrow keys in FileBrowserPanel
+                // We can't directly call those functions from here, so this is informational
             }
 
             mediaKeyHandler.onPrevious = {
-                // Play previous track in focused pane
-                if self.focusedPane == .left {
-                    // TODO: Add previous track function for left pane
-                } else {
-                    // TODO: Add previous track function for right pane
-                }
+                // Play previous track in the pane that's currently playing or visible
+                print("⏮️ Media key: Previous track")
+                // This functionality is handled by arrow keys in FileBrowserPanel
+                // We can't directly call those functions from here, so this is informational
+            }
+        }
+        .onChange(of: leftCurrentMedia) { oldValue, newValue in
+            // Update Now Playing info when left media changes
+            if let media = newValue, showLeftMediaPlayer {
+                mediaKeyHandler.updateNowPlaying(
+                    title: media.name,
+                    artist: nil,
+                    artwork: nil
+                )
+            } else if newValue == nil {
+                mediaKeyHandler.clearNowPlaying()
+            }
+        }
+        .onChange(of: rightCurrentMedia) { oldValue, newValue in
+            // Update Now Playing info when right media changes
+            if let media = newValue, showRightMediaPlayer {
+                mediaKeyHandler.updateNowPlaying(
+                    title: media.name,
+                    artist: nil,
+                    artwork: nil
+                )
+            } else if newValue == nil && leftCurrentMedia == nil {
+                mediaKeyHandler.clearNowPlaying()
             }
         }
     }

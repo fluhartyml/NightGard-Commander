@@ -16,11 +16,12 @@ struct InPaneMediaPlayer: View {
     @Binding var isVisible: Bool
     @Binding var autoPlayNext: Bool
     @Binding var autoPlayOpposite: Bool
+    @Binding var shouldAutoPlay: Bool  // Controls if player starts immediately or paused
+    @Binding var isCurrentlyPlaying: Bool  // Expose playing state to parent
     let fileSystem: FileSystemService
     let onSwitchToOpposite: () -> Void
 
     @State private var player: AVPlayer?
-    @State private var isPlaying = false
     @State private var currentTime: Double = 0
     @State private var duration: Double = 0
     @State private var currentTrackIndex: Int = 0
@@ -70,7 +71,7 @@ struct InPaneMediaPlayer: View {
                             .aspectRatio(16/9, contentMode: .fit)
                             .onAppear {
                                 player.play()
-                                isPlaying = true
+                                isCurrentlyPlaying = true
                             }
                     }
                 } else {
@@ -122,7 +123,7 @@ struct InPaneMediaPlayer: View {
                         .buttonStyle(.borderless)
 
                         Button(action: togglePlayPause) {
-                            Image(systemName: isPlaying ? "pause.circle.fill" : "play.circle.fill")
+                            Image(systemName: isCurrentlyPlaying ? "pause.circle.fill" : "play.circle.fill")
                                 .font(.title3)
                         }
                         .buttonStyle(.borderless)
@@ -186,7 +187,7 @@ struct InPaneMediaPlayer: View {
                         .buttonStyle(.borderless)
 
                         Button(action: togglePlayPause) {
-                            Image(systemName: isPlaying ? "pause.circle.fill" : "play.circle.fill")
+                            Image(systemName: isCurrentlyPlaying ? "pause.circle.fill" : "play.circle.fill")
                                 .font(.title3)
                         }
                         .buttonStyle(.borderless)
@@ -309,8 +310,12 @@ struct InPaneMediaPlayer: View {
                         await MainActor.run {
                             self.duration = CMTimeGetSeconds(loadedDuration)
                             self.albumArt = artwork
-                            player?.play()
-                            isPlaying = true
+                            if shouldAutoPlay {
+                                player?.play()
+                                isCurrentlyPlaying = true
+                            } else {
+                                isCurrentlyPlaying = false
+                            }
                         }
                     } catch {
                         print("Error loading duration/artwork: \(error)")
@@ -357,7 +362,7 @@ struct InPaneMediaPlayer: View {
 
             // Force UI update and verify playback started
             await MainActor.run {
-                self.isPlaying = true
+                self.isCurrentlyPlaying = true
             }
 
             // Monitor player state
@@ -367,7 +372,7 @@ struct InPaneMediaPlayer: View {
         } catch {
             print("Error playing Apple Music content: \(error)")
             await MainActor.run {
-                self.isPlaying = false
+                self.isCurrentlyPlaying = false
             }
         }
     }
@@ -376,23 +381,23 @@ struct InPaneMediaPlayer: View {
         if isWebloc {
             // Control MusicKit player
             let musicPlayer = ApplicationMusicPlayer.shared
-            if isPlaying {
+            if isCurrentlyPlaying {
                 musicPlayer.pause()
             } else {
                 Task {
                     try? await musicPlayer.play()
                 }
             }
-            isPlaying.toggle()
+            isCurrentlyPlaying.toggle()
         } else {
             // Control AVPlayer
             guard let player = player else { return }
-            if isPlaying {
+            if isCurrentlyPlaying {
                 player.pause()
             } else {
                 player.play()
             }
-            isPlaying.toggle()
+            isCurrentlyPlaying.toggle()
         }
     }
 
@@ -405,7 +410,7 @@ struct InPaneMediaPlayer: View {
             player?.pause()
             player = nil
         }
-        isPlaying = false
+        isCurrentlyPlaying = false
         currentTime = 0
         duration = 0
         isWebloc = false
@@ -444,9 +449,9 @@ struct InPaneMediaPlayer: View {
             currentTime = CMTimeGetSeconds(currentItem.currentTime())
 
             // Handle end of media
-            if currentTime >= duration - 0.1 && isPlaying {
+            if currentTime >= duration - 0.1 && isCurrentlyPlaying {
                 player.pause()
-                isPlaying = false
+                isCurrentlyPlaying = false
 
                 // Check auto-play logic
                 if autoPlayNext && currentTrackIndex < mediaFiles.count - 1 {

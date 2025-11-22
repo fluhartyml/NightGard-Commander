@@ -19,6 +19,8 @@ struct FileBrowserPanel: View {
     @Binding var showMediaPlayer: Bool
     @Binding var autoPlayNext: Bool
     @Binding var autoPlayOpposite: Bool
+    @Binding var shouldAutoPlay: Bool  // Controls if media auto-plays on load
+    @Binding var isCurrentlyPlaying: Bool  // Current playback state
     let onSwitchToOpposite: () -> Void
     let otherPanePath: String
     let onRefreshOtherPane: () -> Void
@@ -54,6 +56,7 @@ struct FileBrowserPanel: View {
     @State private var nuclearModeEnabled = false
     @State private var showNuclearToast = false
     @State private var nuclearToastMessage = ""
+    @State private var lastMovedFile: (source: String, destination: String, fileName: String)? = nil
 
     let playlistManager: PlaylistManager?
 
@@ -421,11 +424,18 @@ struct FileBrowserPanel: View {
                             }
                             .contentShape(Rectangle())
                             .onTapGesture(count: 1) {
-                                // Single tap - select/highlight only (no auto-play)
+                                // Single tap - select/highlight + show media player (but don't auto-play)
                                 selectedItems.removeAll()
                                 selectedItems.insert(item.id)
                                 onFocus()
                                 onItemSelect(item)
+
+                                // If it's a media file, show player footer (but paused)
+                                if isMediaFile(item) {
+                                    currentMedia = item
+                                    showMediaPlayer = true
+                                    shouldAutoPlay = false  // Don't auto-play on tap
+                                }
                             }
                             .onTapGesture(count: 2) {
                                 onItemDoubleClick(item)
@@ -569,49 +579,88 @@ struct FileBrowserPanel: View {
                     // NUCLEAR MODE ARROW KEYS
                     .onKeyPress(.leftArrow) {
                         if nuclearModeEnabled {
-                            // ← = Copy to other pane (nuclear mode)
-                            nuclearModeCopy()
+                            // ← = Undo last move (nuclear mode)
+                            undoLastMove()
+                            return .handled
                         }
-                        return .handled
+                        return .ignored  // Let table handle arrow navigation
                     }
                     .onKeyPress(.rightArrow) {
                         if nuclearModeEnabled {
                             // → = Move to other pane + auto-play next (nuclear mode)
                             nuclearModeMove()
-                        } else {
-                            // → = Play next track (normal mode)
-                            playNextTrack()
+                            return .handled
                         }
-                        return .handled
+                        return .ignored  // Let table handle arrow navigation
                     }
                     .onKeyPress(.upArrow) {
                         if nuclearModeEnabled {
                             // ↑ = Previous track + auto-play (nuclear mode)
                             playPreviousTrack()
+                            return .handled
+                        } else if isCurrentlyPlaying {
+                            // ↑ = Previous track when playing
+                            playPreviousTrack()
+                            return .handled
                         }
-                        return .handled
+                        return .ignored  // Let table handle arrow navigation
                     }
                     .onKeyPress(.downArrow) {
                         if nuclearModeEnabled {
                             // ↓ = Next track + auto-play (nuclear mode)
                             advanceToNextTrack()
+                            return .handled
+                        } else if isCurrentlyPlaying {
+                            // ↓ = Next track when playing
+                            advanceToNextTrack()
+                            return .handled
                         }
-                        return .handled
+                        return .ignored  // Let table handle arrow navigation
                     }
                     .onKeyPress(.space) {
                         // Space = Play/Pause
                         if currentMedia != nil {
-                            // Toggle play state
-                            showMediaPlayer.toggle()
+                            if showMediaPlayer {
+                                // Player is visible - toggle play/pause
+                                if isCurrentlyPlaying {
+                                    // Currently playing - pause it
+                                    shouldAutoPlay = false
+                                    isCurrentlyPlaying = false
+                                } else {
+                                    // Currently paused - start playing
+                                    shouldAutoPlay = true
+                                    isCurrentlyPlaying = true
+                                }
+                                // Force refresh by toggling media
+                                let media = currentMedia
+                                currentMedia = nil
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                                    currentMedia = media
+                                }
+                            } else {
+                                // Player not visible - show it and auto-play
+                                showMediaPlayer = true
+                                shouldAutoPlay = true
+                            }
                         } else {
-                            // No media playing - play first track
-                            playNextTrack()
+                            // No media playing - play the highlighted/selected file
+                            if let selectedFile = fileSystem.files.first(where: { selectedItems.contains($0.id) }),
+                               isMediaFile(selectedFile) {
+                                // Play the selected media file
+                                currentMedia = selectedFile
+                                showMediaPlayer = true
+                                shouldAutoPlay = true
+                            } else {
+                                // No selection or not a media file - play first track in folder
+                                playNextTrack()
+                            }
                         }
                         return .handled
                     }
                     .onKeyPress(.return) {
                         // Enter = Play selected item (like double-click)
                         if let item = fileSystem.files.first(where: { selectedItems.contains($0.id) }) {
+                            shouldAutoPlay = true  // Auto-play on Enter
                             onItemDoubleClick(item)
                         }
                         return .handled
@@ -625,6 +674,8 @@ struct FileBrowserPanel: View {
                 isVisible: $showMediaPlayer,
                 autoPlayNext: $autoPlayNext,
                 autoPlayOpposite: $autoPlayOpposite,
+                shouldAutoPlay: $shouldAutoPlay,
+                isCurrentlyPlaying: $isCurrentlyPlaying,
                 fileSystem: fileSystem,
                 onSwitchToOpposite: onSwitchToOpposite
             )
@@ -843,6 +894,31 @@ struct FileBrowserPanel: View {
             }
         }
         .animation(.easeInOut, value: showNuclearToast)
+        .onChange(of: selectedItems) { oldValue, newValue in
+            // When selection changes, update player if it's a media file
+            if let selectedID = newValue.first,
+               let selectedFile = fileSystem.files.first(where: { $0.id == selectedID }),
+               isMediaFile(selectedFile) {
+                // If player is showing (visible but maybe paused), update the media
+                // If player is not showing and not playing, show it paused
+                if showMediaPlayer || currentMedia != nil {
+                    // Update the current media to show new file's info
+                    currentMedia = selectedFile
+                    if !isCurrentlyPlaying {
+                        // Keep it paused, just update the display
+                        shouldAutoPlay = false
+                    } else {
+                        // Currently playing - keep playing the new track
+                        shouldAutoPlay = true
+                    }
+                } else if !isCurrentlyPlaying {
+                    // No player showing and nothing playing - show player paused for selected media file
+                    currentMedia = selectedFile
+                    showMediaPlayer = true
+                    shouldAutoPlay = false
+                }
+            }
+        }
     }
 
     // MARK: - Shazam Integration
@@ -1078,6 +1154,13 @@ struct FileBrowserPanel: View {
 
             try fileManager.moveItem(at: sourceURL, to: destURL)
 
+            // Track this move for undo functionality
+            lastMovedFile = (
+                source: sourceURL.deletingLastPathComponent().path,
+                destination: destURL.path,
+                fileName: destURL.lastPathComponent
+            )
+
             fileSystem.loadFiles()
             onRefreshOtherPane()
 
@@ -1212,15 +1295,58 @@ struct FileBrowserPanel: View {
         }
     }
 
-    // Nuclear mode: Copy current track to other pane
-    private func nuclearModeCopy() {
-        guard let current = currentMedia else {
-            print("No track currently playing to copy")
+    // Nuclear mode: Undo last move operation
+    private func undoLastMove() {
+        guard let lastMove = lastMovedFile else {
+            nuclearToastMessage = "⚠️ No move to undo"
+            showNuclearToast = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                showNuclearToast = false
+            }
             return
         }
 
-        copyToOtherPane(item: current)
-        print("☢️ Copied: \(current.name)")
+        do {
+            let fileManager = FileManager.default
+            let currentLocation = URL(fileURLWithPath: lastMove.destination)
+            let originalLocation = URL(fileURLWithPath: lastMove.source).appendingPathComponent(lastMove.fileName)
+
+            // Check if file still exists at destination
+            guard fileManager.fileExists(atPath: currentLocation.path) else {
+                nuclearToastMessage = "⚠️ File no longer exists"
+                showNuclearToast = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                    showNuclearToast = false
+                }
+                lastMovedFile = nil
+                return
+            }
+
+            // Move file back to original location
+            try fileManager.moveItem(at: currentLocation, to: originalLocation)
+
+            // Clear the undo history
+            lastMovedFile = nil
+
+            // Refresh both panes
+            fileSystem.loadFiles()
+            onRefreshOtherPane()
+
+            nuclearToastMessage = "↩️ Undone: \(lastMove.fileName)"
+            showNuclearToast = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                showNuclearToast = false
+            }
+            print("☢️ Undid move: \(lastMove.fileName)")
+
+        } catch {
+            print("Error undoing move: \(error)")
+            nuclearToastMessage = "⚠️ Undo failed"
+            showNuclearToast = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                showNuclearToast = false
+            }
+        }
     }
 
     // Nuclear mode: Move current track to other pane + auto-play next
