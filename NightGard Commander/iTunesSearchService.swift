@@ -64,6 +64,21 @@ class iTunesSearchService {
             }
 
             currentFile = (audioFile as NSString).lastPathComponent
+
+            // Skip files that have already been scanned by Shazam (in persistent database)
+            if ShazamScannedDatabase.shared.hasBeenScanned(audioFile) {
+                print("⏭️ [ITUNES] Skipping (already scanned by Shazam): \(currentFile)")
+                processedFiles += 1
+                continue
+            }
+
+            // Skip files already in genre review queue (already matched, waiting for user)
+            if GenreReviewQueue.shared.items.contains(where: { $0.filePath == audioFile }) {
+                print("⏭️ [ITUNES] Skipping (already in genre review queue): \(currentFile)")
+                processedFiles += 1
+                continue
+            }
+
             let result = await lookupFile(path: audioFile)
             results.append(result)
 

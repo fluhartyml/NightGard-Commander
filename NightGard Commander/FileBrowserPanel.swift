@@ -217,6 +217,13 @@ struct FileBrowserPanel: View {
                     Divider()
 
                     Button(action: {
+                        ShazamScannedDatabase.shared.clearAll()
+                    }) {
+                        Label("Reset Scan Database (\(ShazamScannedDatabase.shared.count()) files)", systemImage: "trash.circle")
+                    }
+                    .disabled(ShazamScannedDatabase.shared.count() == 0)
+
+                    Button(action: {
                         showShazamSettings = true
                     }) {
                         Label("Shazam Settings...", systemImage: "gear")
@@ -413,6 +420,13 @@ struct FileBrowserPanel: View {
                                 }
                             }
                             .contentShape(Rectangle())
+                            .onTapGesture(count: 1) {
+                                // Single tap - select/highlight only (no auto-play)
+                                selectedItems.removeAll()
+                                selectedItems.insert(item.id)
+                                onFocus()
+                                onItemSelect(item)
+                            }
                             .onTapGesture(count: 2) {
                                 onItemDoubleClick(item)
                             }
@@ -592,6 +606,13 @@ struct FileBrowserPanel: View {
                         } else {
                             // No media playing - play first track
                             playNextTrack()
+                        }
+                        return .handled
+                    }
+                    .onKeyPress(.return) {
+                        // Enter = Play selected item (like double-click)
+                        if let item = fileSystem.files.first(where: { selectedItems.contains($0.id) }) {
+                            onItemDoubleClick(item)
                         }
                         return .handled
                     }

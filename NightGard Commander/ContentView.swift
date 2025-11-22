@@ -13,7 +13,7 @@ enum FocusedPane {
 }
 
 enum PaneMode {
-    case files, playlist, metadata
+    case files, playlist, metadata, preview
 }
 
 struct ContentView: View {
@@ -26,6 +26,7 @@ struct ContentView: View {
     @State private var serverManager = ServerManager()
     @State private var leftPlaylistManager = PlaylistManager()
     @State private var rightPlaylistManager = PlaylistManager()
+    @StateObject private var mediaKeyHandler = MediaKeyHandler()
     @State private var focusedPane: FocusedPane = .left
     @State private var selectedLeftItem: FileItem?
     @State private var selectedRightItem: FileItem?
@@ -37,6 +38,10 @@ struct ContentView: View {
     @State private var previewItem: FileItem?
     @State private var leftPaneMode: PaneMode = .files
     @State private var rightPaneMode: PaneMode = .files
+    @State private var leftPreviewMode: PreviewMode = .none
+    @State private var rightPreviewMode: PreviewMode = .none
+    @State private var leftPreviewItem: FileItem?
+    @State private var rightPreviewItem: FileItem?
     @State private var showShazamSettings = false
 
     init() {
@@ -204,6 +209,11 @@ struct ContentView: View {
             leftPaneMode = .metadata
         case .metadata:
             leftPaneMode = .files
+        case .preview:
+            // Close preview and return to files
+            leftPaneMode = .files
+            leftPreviewItem = nil
+            leftPreviewMode = .none
         }
     }
 
@@ -224,6 +234,11 @@ struct ContentView: View {
             rightPaneMode = .metadata
         case .metadata:
             rightPaneMode = .files
+        case .preview:
+            // Close preview and return to files
+            rightPaneMode = .files
+            rightPreviewItem = nil
+            rightPreviewMode = .none
         }
     }
 
@@ -233,6 +248,7 @@ struct ContentView: View {
         case .files: return "music.note.list"
         case .playlist: return "info.circle"
         case .metadata: return "folder.fill"
+        case .preview: return "folder.fill"
         }
     }
 
@@ -241,6 +257,7 @@ struct ContentView: View {
         case .files: return "Playlist"
         case .playlist: return "Metadata"
         case .metadata: return "Files"
+        case .preview: return "Files"
         }
     }
 
@@ -249,6 +266,7 @@ struct ContentView: View {
         case .files: return "music.note.list"
         case .playlist: return "info.circle"
         case .metadata: return "folder.fill"
+        case .preview: return "folder.fill"
         }
     }
 
@@ -257,6 +275,7 @@ struct ContentView: View {
         case .files: return "Playlist"
         case .playlist: return "Metadata"
         case .metadata: return "Files"
+        case .preview: return "Files"
         }
     }
 
@@ -294,7 +313,7 @@ struct ContentView: View {
 
             // Dual-pane layout
             HStack(spacing: 0) {
-                // Left pane - file browser, playlist, or metadata
+                // Left pane - file browser, playlist, metadata, or preview
                 switch leftPaneMode {
                 case .playlist:
                     PlaylistPanel(
@@ -312,6 +331,19 @@ struct ContentView: View {
                         isFocused: focusedPane == .left,
                         onFocus: { focusedPane = .left }
                     )
+                case .preview:
+                    // Preview panel showing file from RIGHT pane
+                    if let item = leftPreviewItem {
+                        PreviewPanel(
+                            fileItem: item,
+                            previewMode: leftPreviewMode,
+                            onClose: {
+                                leftPaneMode = .files
+                                leftPreviewItem = nil
+                                leftPreviewMode = .none
+                            }
+                        )
+                    }
                 case .files:
                     FileBrowserPanel(
                         fileSystem: leftFileSystem,
@@ -350,7 +382,7 @@ struct ContentView: View {
 
                 Divider()
 
-                // Right pane - file browser, playlist, or metadata
+                // Right pane - file browser, playlist, metadata, or preview
                 switch rightPaneMode {
                 case .playlist:
                     PlaylistPanel(
@@ -368,6 +400,19 @@ struct ContentView: View {
                         isFocused: focusedPane == .right,
                         onFocus: { focusedPane = .right }
                     )
+                case .preview:
+                    // Preview panel showing file from LEFT pane
+                    if let item = rightPreviewItem {
+                        PreviewPanel(
+                            fileItem: item,
+                            previewMode: rightPreviewMode,
+                            onClose: {
+                                rightPaneMode = .files
+                                rightPreviewItem = nil
+                                rightPreviewMode = .none
+                            }
+                        )
+                    }
                 case .files:
                     FileBrowserPanel(
                         fileSystem: rightFileSystem,
@@ -437,7 +482,7 @@ struct ContentView: View {
                 .keyboardShortcut("6", modifiers: .command)
                 .help(moveTooltip)
 
-                CommandButton(label: "New Folder", shortcut: "⌘7") {
+                CommandButton(label: "New", shortcut: "⌘7") {
                     createNewFolder()
                 }
                 .keyboardShortcut("7", modifiers: .command)
@@ -518,6 +563,36 @@ struct ContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: .openShazamSettings)) { _ in
             showShazamSettings = true
         }
+        .onAppear {
+            // Wire up hardware media key controls
+            mediaKeyHandler.onPlayPause = {
+                // Toggle play/pause for whichever pane is currently playing
+                if self.showLeftMediaPlayer {
+                    self.showLeftMediaPlayer.toggle()
+                } else if self.showRightMediaPlayer {
+                    self.showRightMediaPlayer.toggle()
+                }
+            }
+
+            mediaKeyHandler.onNext = {
+                // Play next track in focused pane
+                // This will be similar to Space key behavior
+                if self.focusedPane == .left {
+                    // TODO: Add next track function for left pane
+                } else {
+                    // TODO: Add next track function for right pane
+                }
+            }
+
+            mediaKeyHandler.onPrevious = {
+                // Play previous track in focused pane
+                if self.focusedPane == .left {
+                    // TODO: Add previous track function for left pane
+                } else {
+                    // TODO: Add previous track function for right pane
+                }
+            }
+        }
     }
 
     private func deleteSelectedItem() {
@@ -547,18 +622,35 @@ struct ContentView: View {
 
     private func viewSelectedItem() {
         guard let item = activeSelectedItem else { return }
-        previewItem = item
 
         let fileType = getFileType(for: item)
+        let previewMode: PreviewMode
+
+        // Determine preview mode based on file type
         switch fileType {
         case .image:
-            showImagePreview = true
+            previewMode = .image
         case .text:
-            showTextEditor = true
-        case .audio, .video:
-            startPlayingMedia(item: item)
+            previewMode = .text
+        case .audio:
+            previewMode = .audio
+        case .video:
+            previewMode = .video
         default:
-            break
+            previewMode = .other
+        }
+
+        // Toggle opposite pane to preview mode
+        if focusedPane == .left {
+            // Active pane is left, show preview in right pane
+            rightPreviewMode = previewMode
+            rightPreviewItem = item
+            rightPaneMode = .preview
+        } else {
+            // Active pane is right, show preview in left pane
+            leftPreviewMode = previewMode
+            leftPreviewItem = item
+            leftPaneMode = .preview
         }
     }
 

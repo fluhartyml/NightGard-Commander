@@ -26,6 +26,7 @@ struct InPaneMediaPlayer: View {
     @State private var currentTrackIndex: Int = 0
     @State private var isWebloc = false
     @State private var showAuthAlert = false
+    @State private var albumArt: NSImage?
     @StateObject private var musicService = AppleMusicService.shared
 
     private let timer = Timer.publish(every: 0.1, on: .main, in: .common).autoconnect()
@@ -75,10 +76,19 @@ struct InPaneMediaPlayer: View {
                 } else {
                     // Audio player visualization
                     VStack(spacing: 8) {
-                        Image(systemName: "waveform")
-                            .font(.system(size: 40))
-                            .foregroundColor(.blue)
-                            .padding(.top, 8)
+                        // Album art or waveform icon
+                        if let artwork = albumArt {
+                            Image(nsImage: artwork)
+                                .resizable()
+                                .aspectRatio(contentMode: .fit)
+                                .frame(width: 80, height: 80)
+                                .cornerRadius(6)
+                                .shadow(radius: 2)
+                        } else {
+                            Image(systemName: "waveform")
+                                .font(.system(size: 40))
+                                .foregroundColor(.blue)
+                        }
 
                         Text(media.name)
                             .font(.caption)
@@ -89,7 +99,8 @@ struct InPaneMediaPlayer: View {
                             .foregroundColor(.secondary)
                             .monospacedDigit()
                     }
-                    .frame(height: 120)
+                    .padding(.top, 8)
+                    .frame(height: 140)
                 }
 
                 if isWebloc {
@@ -276,18 +287,33 @@ struct InPaneMediaPlayer: View {
             let url = URL(fileURLWithPath: media.path)
             player = AVPlayer(url: url)
 
-            // Get duration using modern async API
+            // Load album art from audio metadata
             Task {
                 if let asset = player?.currentItem?.asset {
                     do {
+                        // Load duration
                         let loadedDuration = try await asset.load(.duration)
+
+                        // Load album art from metadata
+                        let metadata = try await asset.load(.commonMetadata)
+                        var artwork: NSImage? = nil
+
+                        for item in metadata {
+                            if let key = item.commonKey?.rawValue, key == "artwork",
+                               let data = try await item.load(.value) as? Data {
+                                artwork = NSImage(data: data)
+                                break
+                            }
+                        }
+
                         await MainActor.run {
                             self.duration = CMTimeGetSeconds(loadedDuration)
+                            self.albumArt = artwork
                             player?.play()
                             isPlaying = true
                         }
                     } catch {
-                        print("Error loading duration: \(error)")
+                        print("Error loading duration/artwork: \(error)")
                     }
                 }
             }
@@ -383,6 +409,7 @@ struct InPaneMediaPlayer: View {
         currentTime = 0
         duration = 0
         isWebloc = false
+        albumArt = nil
     }
 
     private func seekToTime(_ time: Double) {

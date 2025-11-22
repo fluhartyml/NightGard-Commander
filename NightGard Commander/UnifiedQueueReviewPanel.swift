@@ -20,6 +20,8 @@ struct UnifiedQueueReviewPanel: View {
     @State private var genreQueue = GenreReviewQueue.shared
     @State private var selectedTab = 0
     @State private var audioPlayer: AVAudioPlayer?
+    @State private var currentlyPlayingPath: String?
+    @State private var isPlaying = false
     let onFileRenamed: (() -> Void)?
 
     var unmatchedCount: Int {
@@ -85,6 +87,8 @@ struct UnifiedQueueReviewPanel: View {
                             ForEach(genreQueue.items) { item in
                                 GenreSelectionRow(
                                     item: item,
+                                    currentlyPlayingPath: currentlyPlayingPath,
+                                    isPlaying: isPlaying,
                                     onApply: { selectedGenre in
                                         applyGenreSelection(item: item, genre: selectedGenre)
                                     },
@@ -114,6 +118,8 @@ struct UnifiedQueueReviewPanel: View {
                             ForEach(unmatchedQueue.items) { item in
                                 UnmatchedItemRow(
                                     item: item,
+                                    currentlyPlayingPath: currentlyPlayingPath,
+                                    isPlaying: isPlaying,
                                     onRetry: {
                                         retryShazam(item: item, deepDive: false)
                                     },
@@ -139,6 +145,15 @@ struct UnifiedQueueReviewPanel: View {
             // Footer actions
             HStack {
                 if selectedTab == 0 && !genreQueue.items.isEmpty {
+                    Button(action: {
+                        autoSelectFirstGenreForAll()
+                    }) {
+                        Label("Use First Genre for All (\(genreQueue.items.count))", systemImage: "bolt.circle.fill")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.purple)
+                    .help("Automatically select the first genre from each list and rename all files")
+
                     Button(action: {
                         genreQueue.removeAll()
                     }) {
@@ -204,6 +219,23 @@ struct UnifiedQueueReviewPanel: View {
     private func playAudioFile(path: String) {
         let url = URL(fileURLWithPath: path)
 
+        // If this is the same file
+        if currentlyPlayingPath == path {
+            if isPlaying {
+                // Pause it
+                audioPlayer?.pause()
+                isPlaying = false
+                print("⏸️ [PLAY] Paused: \(url.lastPathComponent)")
+            } else {
+                // Resume it
+                audioPlayer?.play()
+                isPlaying = true
+                print("▶️ [PLAY] Resumed: \(url.lastPathComponent)")
+            }
+            return
+        }
+
+        // Different file - stop current and play new
         do {
             // Stop current playback if any
             audioPlayer?.stop()
@@ -211,10 +243,14 @@ struct UnifiedQueueReviewPanel: View {
             // Create new player
             audioPlayer = try AVAudioPlayer(contentsOf: url)
             audioPlayer?.play()
+            currentlyPlayingPath = path
+            isPlaying = true
 
             print("▶️ [PLAY] Playing: \(url.lastPathComponent)")
         } catch {
             print("❌ [PLAY] Error playing audio: \(error)")
+            currentlyPlayingPath = nil
+            isPlaying = false
         }
     }
 
@@ -275,6 +311,43 @@ struct UnifiedQueueReviewPanel: View {
         }
     }
 
+    private func autoSelectFirstGenreForAll() {
+        Task {
+            print("⚡ [AUTO GENRE] Starting auto-selection for \(genreQueue.items.count) files...")
+
+            let itemsToProcess = genreQueue.items
+            var processedCount = 0
+
+            for item in itemsToProcess {
+                // Get first genre from the list
+                guard let firstGenre = item.allGenres.first else {
+                    print("⚠️ [AUTO GENRE] No genres available for: \(item.fileName)")
+                    continue
+                }
+
+                print("⚡ [AUTO GENRE] Processing: \(item.fileName) → Genre: \(firstGenre)")
+
+                // Update the queue with selected genre
+                genreQueue.updateGenre(id: item.id, genre: firstGenre)
+
+                // Rename the file with selected genre
+                await renameFileWithGenre(item: item, genre: firstGenre)
+
+                // Remove from queue
+                await MainActor.run {
+                    genreQueue.remove(id: item.id)
+                }
+
+                processedCount += 1
+            }
+
+            await MainActor.run {
+                print("✅ [AUTO GENRE] Complete: Processed \(processedCount) files")
+                onFileRenamed?() // Refresh file browser
+            }
+        }
+    }
+
     private func deepDiveAll() {
         Task {
             print("🔍 [DEEP DIVE ALL] Starting deep dive for \(unmatchedQueue.items.count) files...")
@@ -323,8 +396,10 @@ struct UnifiedQueueReviewPanel: View {
                     }
                 }
 
-                // Small delay between files to avoid overwhelming the API
-                try? await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
+                // Longer delay between files to avoid rate limiting (Error 201)
+                // Each file tries up to 10 positions with 3s delays = ~30s per file
+                // Add extra 5s between files to be safe
+                try? await Task.sleep(nanoseconds: 5_000_000_000) // 5 seconds
             }
 
             await MainActor.run {
@@ -586,6 +661,8 @@ struct UnifiedQueueReviewPanel: View {
 // Row for genre selection items
 struct GenreSelectionRow: View {
     let item: GenreReviewItem
+    let currentlyPlayingPath: String?
+    let isPlaying: Bool
     let onApply: (String) -> Void
     let onRemove: () -> Void
     let onPlay: (String) -> Void
@@ -595,8 +672,10 @@ struct GenreSelectionRow: View {
     @State private var customGenre = ""
     @State private var isProcessing = false
 
-    init(item: GenreReviewItem, onApply: @escaping (String) -> Void, onRemove: @escaping () -> Void, onPlay: @escaping (String) -> Void) {
+    init(item: GenreReviewItem, currentlyPlayingPath: String?, isPlaying: Bool, onApply: @escaping (String) -> Void, onRemove: @escaping () -> Void, onPlay: @escaping (String) -> Void) {
         self.item = item
+        self.currentlyPlayingPath = currentlyPlayingPath
+        self.isPlaying = isPlaying
         self.onApply = onApply
         self.onRemove = onRemove
         self.onPlay = onPlay
@@ -646,16 +725,16 @@ struct GenreSelectionRow: View {
 
                     Spacer()
 
-                    // Play button (always visible)
+                    // Play/Pause button (always visible)
                     Button(action: {
                         onPlay(item.filePath)
                     }) {
-                        Image(systemName: "play.circle.fill")
+                        Image(systemName: (currentlyPlayingPath == item.filePath && isPlaying) ? "pause.circle.fill" : "play.circle.fill")
                             .font(.title2)
-                            .foregroundColor(.blue)
+                            .foregroundColor((currentlyPlayingPath == item.filePath && isPlaying) ? .orange : .blue)
                     }
                     .buttonStyle(.plain)
-                    .help("Play preview")
+                    .help((currentlyPlayingPath == item.filePath && isPlaying) ? "Pause" : "Play")
 
                     // Expand/collapse chevron
                     Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
@@ -772,6 +851,8 @@ struct GenreSelectionRow: View {
 // Row for unmatched items
 struct UnmatchedItemRow: View {
     let item: QueuedItem
+    let currentlyPlayingPath: String?
+    let isPlaying: Bool
     let onRetry: () -> Void
     let onDeepDive: () -> Void
     let onRemove: () -> Void
@@ -818,16 +899,16 @@ struct UnmatchedItemRow: View {
 
                     Spacer()
 
-                    // Play button (always visible)
+                    // Play/Pause button (always visible)
                     Button(action: {
                         onPlay(item.filePath)
                     }) {
-                        Image(systemName: "play.circle.fill")
+                        Image(systemName: (currentlyPlayingPath == item.filePath && isPlaying) ? "pause.circle.fill" : "play.circle.fill")
                             .font(.title2)
-                            .foregroundColor(.blue)
+                            .foregroundColor((currentlyPlayingPath == item.filePath && isPlaying) ? .orange : .blue)
                     }
                     .buttonStyle(.plain)
-                    .help("Play preview")
+                    .help((currentlyPlayingPath == item.filePath && isPlaying) ? "Pause" : "Play")
 
                     // Expand/collapse chevron
                     Image(systemName: isExpanded ? "chevron.up" : "chevron.down")

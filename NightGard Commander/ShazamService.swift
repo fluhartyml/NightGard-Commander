@@ -71,11 +71,29 @@ class ShazamService {
             }
 
             currentFile = (audioFile as NSString).lastPathComponent
+
+            // Skip files that have already been scanned (in persistent database)
+            if ShazamScannedDatabase.shared.hasBeenScanned(audioFile) {
+                print("⏭️ [SHAZAM] Skipping (already scanned): \(currentFile)")
+                processedFiles += 1
+                continue
+            }
+
+            // Skip files already in genre review queue (already matched, waiting for user)
+            if GenreReviewQueue.shared.items.contains(where: { $0.filePath == audioFile }) {
+                print("⏭️ [SHAZAM] Skipping (already in genre review queue): \(currentFile)")
+                processedFiles += 1
+                continue
+            }
+
             let result = await detectFile(path: audioFile)
             results.append(result)
 
             if result.matched {
                 matchedCount += 1
+
+                // Mark file as scanned in database (prevent re-scanning)
+                ShazamScannedDatabase.shared.markAsScanned(audioFile)
 
                 // Check if file needs genre review
                 if result.needsGenreReview {
@@ -142,29 +160,69 @@ class ShazamService {
         let totalDuration = Double(audioFile.length) / format.sampleRate
         print("🔍 [DEEP DIVE] File duration: \(totalDuration) seconds")
 
-        // Try multiple positions: 30s, 60s, 90s, 120s (skip intros/outros)
-        let samplePositions: [Double] = [30.0, 60.0, 90.0, 120.0, 0.0] // Try middle positions first, then beginning as fallback
-        let sampleDuration = 15.0 // Use longer sample for deep dive
+        // Skip files that are too short to be real music (sound effects, alerts, etc.)
+        if totalDuration < 30.0 {
+            print("⏭️ [DEEP DIVE] Skipping - too short (\(Int(totalDuration))s, likely sound effect)")
+            return ShazamResult(
+                filePath: path,
+                fileName: currentFile,
+                allGenres: [],
+                needsGenreReview: false,
+                matched: false,
+                error: "File too short (likely sound effect)"
+            )
+        }
+
+        // Use longer samples and more random positions like phone Shazam
+        let sampleDuration = 25.0 // Longer samples for better matching (like phone app)
+
+        // Generate random positions throughout the song
+        // Skip first/last 10% to avoid intros/outros
+        let skipStart = totalDuration * 0.1
+        let skipEnd = totalDuration * 0.9
+        let usableRange = skipEnd - skipStart
+
+        var samplePositions: [Double] = []
+
+        // Add some fixed strategic positions first
+        if totalDuration > 40 { samplePositions.append(20.0) }  // After intro
+        if totalDuration > 70 { samplePositions.append(45.0) }  // Verse/Chorus
+        if totalDuration > 100 { samplePositions.append(70.0) } // Middle
+
+        // Add random positions throughout the song
+        // Use fewer positions to avoid rate limiting (Error 201)
+        for _ in 0..<4 {  // Reduced from 7 to 4 random positions
+            let randomOffset = Double.random(in: 0...usableRange)
+            let position = skipStart + randomOffset
+            if position + sampleDuration <= totalDuration {
+                samplePositions.append(position)
+            }
+        }
+
+        // Shuffle to randomize order
+        samplePositions.shuffle()
+
+        print("🔍 [DEEP DIVE] Will try \(samplePositions.count) positions with \(sampleDuration)s samples (3s delay between attempts)")
 
         for position in samplePositions {
             // Skip if position is beyond file length
             if position + sampleDuration > totalDuration {
-                print("🔍 [DEEP DIVE] Skipping position \(position)s (beyond file length)")
+                print("🔍 [DEEP DIVE] Skipping position \(Int(position))s (beyond file length)")
                 continue
             }
 
-            print("🔍 [DEEP DIVE] Trying position: \(position)s")
+            print("🔍 [DEEP DIVE] Trying position: \(Int(position))s")
             let result = await detectFile(path: path, startOffset: position, duration: sampleDuration)
 
             if result.matched {
-                print("✅ [DEEP DIVE] Match found at position \(position)s!")
+                print("✅ [DEEP DIVE] Match found at position \(Int(position))s!")
                 return result
             } else {
-                print("❌ [DEEP DIVE] No match at position \(position)s")
+                print("❌ [DEEP DIVE] No match at position \(Int(position))s")
             }
 
-            // Small delay between attempts to avoid rate limiting
-            try? await Task.sleep(nanoseconds: 1_000_000_000) // 1 second
+            // Longer delay between attempts to avoid rate limiting (Error 201)
+            try? await Task.sleep(nanoseconds: 3_000_000_000) // 3 seconds
         }
 
         print("❌ [DEEP DIVE] No matches found at any position")
@@ -251,10 +309,25 @@ class ShazamService {
                             let genre = allGenres.first
                             let year: String? = nil // ShazamKit doesn't provide year/release date
 
-                            // Determine if user needs to manually pick genre
-                            let needsGenreReview = allGenres.count > 1 || allGenres.isEmpty
+                            // Check if filename already has genre prefix (e.g., "Pop - Artist - Title.mp3")
+                            // If so, skip genre review since user already chose it
+                            // Must have non-empty genre prefix (not starting with " - ")
+                            let parts = fileName.split(separator: " - ", omittingEmptySubsequences: false)
+                            let fileHasGenrePrefix = parts.count >= 2 &&
+                                                     !parts[0].isEmpty &&
+                                                     !fileName.hasPrefix("Track ") // Avoid false positives
 
-                            if allGenres.isEmpty {
+                            // Determine if user needs to manually pick genre
+                            var needsGenreReview = allGenres.count > 1 || allGenres.isEmpty
+
+                            if fileHasGenrePrefix {
+                                // File already has "Genre - Artist - Title" format
+                                // Extract genre from filename
+                                if let filenameGenre = parts.first {
+                                    print("   ℹ️ File already has genre prefix: \(filenameGenre) - skipping review")
+                                    needsGenreReview = false
+                                }
+                            } else if allGenres.isEmpty {
                                 print("   ⚠️ No genre available - needs manual review")
                             } else if allGenres.count > 1 {
                                 print("   ⚠️ Multiple genres available (\(allGenres.count)) - needs manual review: \(allGenres.joined(separator: ", "))")
@@ -515,6 +588,16 @@ class ShazamService {
     }
 
     private func saveMetadata(result: ShazamResult, to url: URL) async throws {
+        let ext = url.pathExtension.lowercased()
+
+        // MP3 files: Skip metadata writing (AVAssetExportSession doesn't support MP3 output)
+        // Genre is already in filename, so just return success
+        if ext == "mp3" {
+            print("💾 [METADATA] Skipping MP3 metadata write (not supported by AVAssetExportSession)")
+            print("   Genre already saved in filename: \(result.fileName)")
+            return
+        }
+
         let asset = AVURLAsset(url: url)
 
         // Prepare metadata items using common key format (same as MetadataEditor)
@@ -562,11 +645,8 @@ class ShazamService {
         exportSession.metadata = metadataItems
 
         // Determine output file type based on extension
-        let ext = url.pathExtension.lowercased()
         let outputFileType: AVFileType
         switch ext {
-        case "mp3":
-            outputFileType = .mp3
         case "m4a", "m4b":
             outputFileType = .m4a
         case "mp4", "m4v":
