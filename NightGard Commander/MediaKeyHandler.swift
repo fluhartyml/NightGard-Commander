@@ -7,10 +7,11 @@
 //
 
 import Foundation
+import AppKit
 import MediaPlayer
 
 @MainActor
-class MediaKeyHandler: ObservableObject {
+class MediaKeyHandler {
     private let commandCenter = MPRemoteCommandCenter.shared()
 
     // Callbacks for media actions

@@ -26,7 +26,7 @@ struct ContentView: View {
     @State private var serverManager = ServerManager()
     @State private var leftPlaylistManager = PlaylistManager()
     @State private var rightPlaylistManager = PlaylistManager()
-    @StateObject private var mediaKeyHandler = MediaKeyHandler()
+    @State private var mediaKeyHandler = MediaKeyHandler()
     @State private var focusedPane: FocusedPane = .left
     @State private var selectedLeftItem: FileItem?
     @State private var selectedRightItem: FileItem?
