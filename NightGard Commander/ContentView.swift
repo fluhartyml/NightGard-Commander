@@ -572,6 +572,59 @@ struct ContentView: View {
         .onChange(of: rightFileSystem.currentPath) { oldValue, newValue in
             savedRightPath = newValue
         }
+        // PREVIEW PANEL UPDATES - Update preview when selection changes in active pane
+        .onChange(of: selectedLeftItems) { oldValue, newValue in
+            // If right pane is showing preview, update it when left selection changes
+            guard rightPaneMode == .preview else { return }
+            guard let selectedID = newValue.first else { return }
+            guard let selectedFile = leftFileSystem.files.first(where: { $0.id == selectedID }) else { return }
+
+            // Determine preview mode based on file type
+            let fileType = getFileType(for: selectedFile)
+            let previewMode: PreviewMode
+            switch fileType {
+            case .image:
+                previewMode = .image
+            case .text:
+                previewMode = .text
+            case .audio:
+                previewMode = .audio
+            case .video:
+                previewMode = .video
+            default:
+                previewMode = .other
+            }
+
+            // Update right preview
+            rightPreviewMode = previewMode
+            rightPreviewItem = selectedFile
+        }
+        .onChange(of: selectedRightItems) { oldValue, newValue in
+            // If left pane is showing preview, update it when right selection changes
+            guard leftPaneMode == .preview else { return }
+            guard let selectedID = newValue.first else { return }
+            guard let selectedFile = rightFileSystem.files.first(where: { $0.id == selectedID }) else { return }
+
+            // Determine preview mode based on file type
+            let fileType = getFileType(for: selectedFile)
+            let previewMode: PreviewMode
+            switch fileType {
+            case .image:
+                previewMode = .image
+            case .text:
+                previewMode = .text
+            case .audio:
+                previewMode = .audio
+            case .video:
+                previewMode = .video
+            default:
+                previewMode = .other
+            }
+
+            // Update left preview
+            leftPreviewMode = previewMode
+            leftPreviewItem = selectedFile
+        }
         .onReceive(NotificationCenter.default.publisher(for: .openShazamSettings)) { _ in
             showShazamSettings = true
         }

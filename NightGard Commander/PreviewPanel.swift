@@ -45,23 +45,26 @@ struct PreviewPanel: View {
 
             Divider()
 
-            // Preview content
+            // Preview content - full width, anchored to top
             ScrollView {
-                switch previewMode {
-                case .image:
-                    ImagePreviewContent(filePath: fileItem.path)
-                case .audio:
-                    AudioPreviewContent(filePath: fileItem.path, fileName: fileItem.name)
-                case .video:
-                    VideoPreviewContent(filePath: fileItem.path)
-                case .text:
-                    TextPreviewContent(filePath: fileItem.path)
-                case .other:
-                    QuickLookPreviewContent(filePath: fileItem.path)
-                case .none:
-                    Text("No preview available")
-                        .foregroundColor(.secondary)
+                VStack(alignment: .leading, spacing: 0) {
+                    switch previewMode {
+                    case .image:
+                        ImagePreviewContent(filePath: fileItem.path)
+                    case .audio:
+                        AudioPreviewContent(filePath: fileItem.path, fileName: fileItem.name)
+                    case .video:
+                        VideoPreviewContent(filePath: fileItem.path)
+                    case .text:
+                        TextPreviewContent(filePath: fileItem.path)
+                    case .other:
+                        QuickLookPreviewContent(filePath: fileItem.path)
+                    case .none:
+                        Text("No preview available")
+                            .foregroundColor(.secondary)
+                    }
                 }
+                .frame(maxWidth: .infinity, alignment: .top)
             }
         }
     }
@@ -77,10 +80,11 @@ struct ImagePreviewContent: View {
             Image(nsImage: nsImage)
                 .resizable()
                 .aspectRatio(contentMode: .fit)
-                .frame(maxWidth: .infinity)
+                .frame(maxWidth: .infinity, alignment: .top)
         } else {
             Text("Cannot load image")
                 .foregroundColor(.secondary)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
         }
     }
 }
@@ -102,21 +106,21 @@ struct AudioPreviewContent: View {
     @State private var saveMessage: String?
 
     var body: some View {
-        VStack(spacing: 20) {
-            // Album Art
+        VStack(alignment: .leading, spacing: 0) {
+            // Album Art - scaled to ~3 inches (250 points), anchored to top-left
             if let artworkData = metadata?.artwork,
                let nsImage = NSImage(data: artworkData) {
                 Image(nsImage: nsImage)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
-                    .frame(maxWidth: 300, maxHeight: 300)
+                    .frame(width: 250, height: 250)
                     .cornerRadius(8)
                     .shadow(radius: 4)
             } else {
                 Image(systemName: "music.note")
                     .resizable()
                     .aspectRatio(contentMode: .fit)
-                    .frame(width: 200, height: 200)
+                    .frame(width: 250, height: 250)
                     .foregroundColor(.secondary)
             }
 
@@ -159,7 +163,7 @@ struct AudioPreviewContent: View {
             .padding(.horizontal)
         }
         .padding()
-        .task {
+        .task(id: filePath) {
             await loadAudioMetadata()
         }
         .onChange(of: metadata) { oldValue, newValue in
@@ -367,22 +371,25 @@ struct VideoPreviewContent: View {
     let filePath: String
 
     var body: some View {
-        VStack {
+        VStack(alignment: .leading, spacing: 12) {
             Image(systemName: "play.rectangle.fill")
                 .resizable()
                 .aspectRatio(contentMode: .fit)
-                .frame(width: 100, height: 100)
+                .frame(maxWidth: .infinity)
+                .frame(height: 200)
                 .foregroundColor(.secondary)
 
             Text("Video preview")
                 .font(.headline)
                 .foregroundColor(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
 
             Text("Double-click to play in media player")
                 .font(.caption)
                 .foregroundColor(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
     }
 }
 
@@ -396,8 +403,8 @@ struct TextPreviewContent: View {
     var body: some View {
         TextEditor(text: .constant(content))
             .font(.system(.body, design: .monospaced))
-            .padding()
-        .task {
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .task(id: filePath) {
             loadTextContent()
         }
     }
@@ -417,21 +424,24 @@ struct QuickLookPreviewContent: View {
     let filePath: String
 
     var body: some View {
-        VStack {
+        VStack(alignment: .leading, spacing: 12) {
             Image(systemName: "doc.text.magnifyingglass")
                 .resizable()
                 .aspectRatio(contentMode: .fit)
-                .frame(width: 100, height: 100)
+                .frame(maxWidth: .infinity)
+                .frame(height: 200)
                 .foregroundColor(.secondary)
 
             Text("Preview not available")
                 .font(.headline)
                 .foregroundColor(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
 
             Text("Use Command-4 to edit")
                 .font(.caption)
                 .foregroundColor(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
     }
 }
