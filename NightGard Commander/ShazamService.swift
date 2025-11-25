@@ -305,7 +305,7 @@ class ShazamService {
 
                             // Debug: Check what's available in mediaItem
                             print("   Genres array: \(mediaItem.genres)")
-                            let allGenres = mediaItem.genres
+                            let allGenres = mediaItem.genres.filter { $0 != "Music" }
                             let genre = allGenres.first
                             let year: String? = nil // ShazamKit doesn't provide year/release date
 

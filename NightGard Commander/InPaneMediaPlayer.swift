@@ -29,6 +29,9 @@ struct InPaneMediaPlayer: View {
     @State private var showAuthAlert = false
     @State private var albumArt: NSImage?
     @StateObject private var musicService = AppleMusicService.shared
+    @State private var audioAnalyzer = AudioAnalyzer()
+    @State private var selectedVisualizer: VisualizerType = .spectrum
+    @State private var showVisualizer = true
 
     private let timer = Timer.publish(every: 0.1, on: .main, in: .common).autoconnect()
 
@@ -76,9 +79,25 @@ struct InPaneMediaPlayer: View {
                     }
                 } else {
                     // Audio player visualization
-                    VStack(spacing: 8) {
-                        // Album art or waveform icon
-                        if let artwork = albumArt {
+                    VStack(spacing: 4) {
+                        if showVisualizer && isCurrentlyPlaying {
+                            // Live visualizer
+                            VisualizerContainer(
+                                type: selectedVisualizer,
+                                frequencyData: audioAnalyzer.frequencyData,
+                                amplitude: audioAnalyzer.amplitude
+                            )
+                            .frame(height: 100)
+                            .cornerRadius(6)
+                            .onTapGesture {
+                                // Cycle through visualizers on tap
+                                let allTypes = VisualizerType.allCases
+                                if let index = allTypes.firstIndex(of: selectedVisualizer) {
+                                    selectedVisualizer = allTypes[(index + 1) % allTypes.count]
+                                }
+                            }
+                        } else if let artwork = albumArt {
+                            // Album art when paused or visualizer off
                             Image(nsImage: artwork)
                                 .resizable()
                                 .aspectRatio(contentMode: .fit)
@@ -86,9 +105,21 @@ struct InPaneMediaPlayer: View {
                                 .cornerRadius(6)
                                 .shadow(radius: 2)
                         } else {
+                            // Fallback waveform icon
                             Image(systemName: "waveform")
                                 .font(.system(size: 40))
                                 .foregroundColor(.blue)
+                        }
+
+                        // Visualizer type indicator
+                        if showVisualizer && isCurrentlyPlaying {
+                            HStack(spacing: 4) {
+                                Image(systemName: selectedVisualizer.icon)
+                                    .font(.caption2)
+                                Text(selectedVisualizer.rawValue)
+                                    .font(.caption2)
+                            }
+                            .foregroundColor(.secondary)
                         }
 
                         Text(media.name)
@@ -100,8 +131,8 @@ struct InPaneMediaPlayer: View {
                             .foregroundColor(.secondary)
                             .monospacedDigit()
                     }
-                    .padding(.top, 8)
-                    .frame(height: 140)
+                    .padding(.top, 4)
+                    .frame(height: 160)
                 }
 
                 if isWebloc {
@@ -313,6 +344,10 @@ struct InPaneMediaPlayer: View {
                             if shouldAutoPlay {
                                 player?.play()
                                 isCurrentlyPlaying = true
+                                // Start visualizer analysis
+                                if !isVideo {
+                                    audioAnalyzer.startAnalyzing(url: url)
+                                }
                             } else {
                                 isCurrentlyPlaying = false
                             }
@@ -394,14 +429,23 @@ struct InPaneMediaPlayer: View {
             guard let player = player else { return }
             if isCurrentlyPlaying {
                 player.pause()
+                audioAnalyzer.stopAnalyzing()
             } else {
                 player.play()
+                // Restart analyzer on resume
+                if let media = currentMedia, !isVideo {
+                    let url = URL(fileURLWithPath: media.path)
+                    audioAnalyzer.startAnalyzing(url: url)
+                }
             }
             isCurrentlyPlaying.toggle()
         }
     }
 
     private func stopPlayback() {
+        // Stop audio analyzer
+        audioAnalyzer.stopAnalyzing()
+
         if isWebloc {
             // Stop MusicKit player
             ApplicationMusicPlayer.shared.stop()

@@ -49,6 +49,7 @@ struct FileBrowserPanel: View {
     @State private var showBatchShazam = false
     @State private var showBatchITunes = false
     @State private var showQueueReview = false
+    @State private var showUnifiedQueue = false
     @FocusState private var isNewItemFocused: Bool
     @FocusState private var isRenameFocused: Bool
 
@@ -213,9 +214,16 @@ struct FileBrowserPanel: View {
                     Button(action: {
                         showQueueReview = true
                     }) {
-                        Label("Review Queue (\(ShazamQueue.shared.items.count))", systemImage: "list.bullet")
+                        Label("Unmatched Queue (\(ShazamQueue.shared.items.count))", systemImage: "list.bullet")
                     }
                     .disabled(ShazamQueue.shared.items.isEmpty)
+
+                    Button(action: {
+                        showUnifiedQueue = true
+                    }) {
+                        Label("Genre Review Queue (\(GenreReviewQueue.shared.items.count))", systemImage: "music.note.list")
+                    }
+                    .disabled(GenreReviewQueue.shared.items.isEmpty)
 
                     Divider()
 
@@ -399,8 +407,8 @@ struct FileBrowserPanel: View {
                                             .font(.system(size: 14))
                                             .foregroundColor(.blue)
                                     }
-                                    .buttonStyle(.plain)
-                                    .help("Play")
+                                    .buttonStyle(.borderless)
+                                    .help("Play (or press Enter)")
                                 }
 
                                 if renamingItem?.id == item.id {
@@ -421,24 +429,6 @@ struct FileBrowserPanel: View {
                                     Text(item.name)
                                         .lineLimit(1)
                                 }
-                            }
-                            .contentShape(Rectangle())
-                            .onTapGesture(count: 1) {
-                                // Single tap - select/highlight + show media player (but don't auto-play)
-                                selectedItems.removeAll()
-                                selectedItems.insert(item.id)
-                                onFocus()
-                                onItemSelect(item)
-
-                                // If it's a media file, show player footer (but paused)
-                                if isMediaFile(item) {
-                                    currentMedia = item
-                                    showMediaPlayer = true
-                                    shouldAutoPlay = false  // Don't auto-play on tap
-                                }
-                            }
-                            .onTapGesture(count: 2) {
-                                onItemDoubleClick(item)
                             }
                         }
                         .width(min: 100, max: 500)
@@ -550,6 +540,17 @@ struct FileBrowserPanel: View {
                         fileSystem.loadFiles()
                         return true
                     }
+                    .gesture(
+                        TapGesture(count: 2)
+                            .onEnded {
+                                // Handle double-click on table row
+                                if let selectedID = selectedItems.first,
+                                   let item = fileSystem.files.first(where: { $0.id == selectedID }),
+                                   isMediaFile(item) {
+                                    onItemDoubleClick(item)
+                                }
+                            }
+                    )
                     .onChange(of: selectedItems) { oldValue, newValue in
                         if let firstID = newValue.first,
                            let item = fileSystem.files.first(where: { $0.id == firstID }) {
@@ -568,6 +569,16 @@ struct FileBrowserPanel: View {
                         }
                     }
                     // DJ CURATION KEYBOARD SHORTCUTS
+                    .onKeyPress(.return) {
+                        // Enter/Return = Play selected media file
+                        if let firstID = selectedItems.first,
+                           let item = fileSystem.files.first(where: { $0.id == firstID }),
+                           isMediaFile(item) {
+                            onItemDoubleClick(item)
+                            return .handled
+                        }
+                        return .ignored
+                    }
                     .onKeyPress(.init("m")) {
                         // M = Move selected file to other pane + play next
                         if let firstID = selectedItems.first,
@@ -736,14 +747,14 @@ struct FileBrowserPanel: View {
                 if !fileStillExists {
                     // File was removed - check if it was moved or deleted
                     if isMovingCurrentMedia {
-                        // File was moved - auto-advance to next track if auto-play is enabled
+                        // File was moved - auto-advance to next track if auto-play is enabled OR nuclear mode is on
                         isMovingCurrentMedia = false
 
                         // Force stop current player before advancing
                         currentMedia = nil
                         showMediaPlayer = false
 
-                        if autoPlayNext {
+                        if autoPlayNext || nuclearModeEnabled {
                             // Small delay to let player fully stop before loading next track
                             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                                 // Find the media files (audio/video only)
@@ -855,6 +866,12 @@ struct FileBrowserPanel: View {
                     let folderPath = (filePath as NSString).deletingLastPathComponent
                     fileSystem.navigateToFolder(folderPath)
                 }
+            )
+        }
+        .sheet(isPresented: $showUnifiedQueue) {
+            UnifiedQueueReviewPanel(
+                isPresented: $showUnifiedQueue,
+                onFileRenamed: onRefreshOtherPane
             )
         }
         .alert("File Already Exists", isPresented: $showDuplicateAlert) {
