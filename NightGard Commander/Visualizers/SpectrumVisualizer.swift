@@ -21,15 +21,18 @@ struct SpectrumVisualizer: View {
             let spacing: CGFloat = 2
             let actualBarWidth = barWidth - spacing
 
-            HStack(alignment: .bottom, spacing: spacing) {
-                ForEach(0..<barCount, id: \.self) { index in
-                    SpectrumBar(
-                        value: getBarValue(for: index),
-                        maxHeight: geometry.size.height,
-                        barWidth: actualBarWidth,
-                        index: index,
-                        totalBars: barCount
-                    )
+            VStack {
+                Spacer()
+                HStack(alignment: .bottom, spacing: spacing) {
+                    ForEach(0..<barCount, id: \.self) { index in
+                        SpectrumBar(
+                            value: getBarValue(for: index),
+                            maxHeight: geometry.size.height,
+                            barWidth: actualBarWidth,
+                            index: index,
+                            totalBars: barCount
+                        )
+                    }
                 }
             }
         }

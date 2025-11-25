@@ -81,13 +81,13 @@ struct InPaneMediaPlayer: View {
                     // Audio player visualization
                     VStack(spacing: 4) {
                         if showVisualizer && isCurrentlyPlaying {
-                            // Live visualizer
+                            // Live visualizer (16:9 aspect ratio)
                             VisualizerContainer(
                                 type: selectedVisualizer,
                                 frequencyData: audioAnalyzer.frequencyData,
                                 amplitude: audioAnalyzer.amplitude
                             )
-                            .frame(height: 100)
+                            .aspectRatio(16/9, contentMode: .fit)
                             .cornerRadius(6)
                             .onTapGesture {
                                 // Cycle through visualizers on tap
@@ -132,7 +132,6 @@ struct InPaneMediaPlayer: View {
                             .monospacedDigit()
                     }
                     .padding(.top, 4)
-                    .frame(height: 160)
                 }
 
                 if isWebloc {
@@ -235,6 +234,12 @@ struct InPaneMediaPlayer: View {
                         }
                         .buttonStyle(.borderless)
                         .disabled(currentTrackIndex == mediaFiles.count - 1)
+
+                        // AirPlay picker (only when player exists)
+                        if player != nil {
+                            AirPlayPicker(player: player)
+                                .frame(width: 20, height: 20)
+                        }
                     }
                     .padding(.vertical, 4)
                 }
@@ -297,7 +302,8 @@ struct InPaneMediaPlayer: View {
     private func setupPlayer() {
         guard let media = currentMedia else { return }
 
-        stopPlayback()
+        // Stop visualizer
+        audioAnalyzer.stopDemoMode()
 
         // Update current track index
         if let index = mediaFiles.firstIndex(where: { $0.id == media.id }) {
@@ -308,53 +314,70 @@ struct InPaneMediaPlayer: View {
         let filename = media.name.lowercased()
         if filename.hasSuffix(".media.webloc") {
             // This is an Apple Music audio link - use MusicKit
+            // Stop AVPlayer if switching to webloc
+            player?.pause()
+            player = nil
             isWebloc = true
             Task {
                 await playAppleMusicWebloc(path: media.path)
             }
         } else {
             // Regular audio/video file
+            // Stop MusicKit if switching from webloc
+            if isWebloc {
+                ApplicationMusicPlayer.shared.stop()
+            }
             isWebloc = false
 
             let url = URL(fileURLWithPath: media.path)
-            player = AVPlayer(url: url)
+            let playerItem = AVPlayerItem(url: url)
+
+            // Reuse existing player or create new one
+            if let existingPlayer = player {
+                existingPlayer.replaceCurrentItem(with: playerItem)
+            } else {
+                player = AVPlayer(playerItem: playerItem)
+            }
+
+            // Reset state
+            currentTime = 0
+            albumArt = nil
 
             // Load album art from audio metadata
             Task {
-                if let asset = player?.currentItem?.asset {
-                    do {
-                        // Load duration
-                        let loadedDuration = try await asset.load(.duration)
+                let asset = playerItem.asset
+                do {
+                    // Load duration
+                    let loadedDuration = try await asset.load(.duration)
 
-                        // Load album art from metadata
-                        let metadata = try await asset.load(.commonMetadata)
-                        var artwork: NSImage? = nil
+                    // Load album art from metadata
+                    let metadata = try await asset.load(.commonMetadata)
+                    var artwork: NSImage? = nil
 
-                        for item in metadata {
-                            if let key = item.commonKey?.rawValue, key == "artwork",
-                               let data = try await item.load(.value) as? Data {
-                                artwork = NSImage(data: data)
-                                break
-                            }
+                    for item in metadata {
+                        if let key = item.commonKey?.rawValue, key == "artwork",
+                           let data = try await item.load(.value) as? Data {
+                            artwork = NSImage(data: data)
+                            break
                         }
-
-                        await MainActor.run {
-                            self.duration = CMTimeGetSeconds(loadedDuration)
-                            self.albumArt = artwork
-                            if shouldAutoPlay {
-                                player?.play()
-                                isCurrentlyPlaying = true
-                                // Start visualizer analysis
-                                if !isVideo {
-                                    audioAnalyzer.startAnalyzing(url: url)
-                                }
-                            } else {
-                                isCurrentlyPlaying = false
-                            }
-                        }
-                    } catch {
-                        print("Error loading duration/artwork: \(error)")
                     }
+
+                    await MainActor.run {
+                        self.duration = CMTimeGetSeconds(loadedDuration)
+                        self.albumArt = artwork
+                        if shouldAutoPlay {
+                            player?.play()
+                            isCurrentlyPlaying = true
+                            // Start visualizer demo mode for now
+                            if !isVideo {
+                                audioAnalyzer.startDemoMode()
+                            }
+                        } else {
+                            isCurrentlyPlaying = false
+                        }
+                    }
+                } catch {
+                    print("Error loading duration/artwork: \(error)")
                 }
             }
         }
@@ -429,13 +452,12 @@ struct InPaneMediaPlayer: View {
             guard let player = player else { return }
             if isCurrentlyPlaying {
                 player.pause()
-                audioAnalyzer.stopAnalyzing()
+                audioAnalyzer.stopDemoMode()
             } else {
                 player.play()
-                // Restart analyzer on resume
-                if let media = currentMedia, !isVideo {
-                    let url = URL(fileURLWithPath: media.path)
-                    audioAnalyzer.startAnalyzing(url: url)
+                // Restart visualizer demo on resume
+                if !isVideo {
+                    audioAnalyzer.startDemoMode()
                 }
             }
             isCurrentlyPlaying.toggle()
@@ -443,8 +465,8 @@ struct InPaneMediaPlayer: View {
     }
 
     private func stopPlayback() {
-        // Stop audio analyzer
-        audioAnalyzer.stopAnalyzing()
+        // Stop visualizer
+        audioAnalyzer.stopDemoMode()
 
         if isWebloc {
             // Stop MusicKit player
@@ -597,5 +619,26 @@ struct AppleMusicPlayerView: View {
         .onAppear {
             // MusicKit player state is monitored via onChange above
         }
+    }
+}
+
+// MARK: - AirPlay Route Picker
+struct AirPlayPicker: NSViewRepresentable {
+    let player: AVPlayer?
+
+    func makeNSView(context: Context) -> AVRoutePickerView {
+        let picker = AVRoutePickerView()
+        picker.isRoutePickerButtonBordered = false
+        picker.setRoutePickerButtonColor(.secondaryLabelColor, for: .normal)
+        picker.setRoutePickerButtonColor(.controlAccentColor, for: .active)
+        // Set the player for AirPlay routing
+        if let player = player {
+            picker.player = player
+        }
+        return picker
+    }
+
+    func updateNSView(_ nsView: AVRoutePickerView, context: Context) {
+        nsView.player = player
     }
 }

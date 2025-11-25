@@ -59,6 +59,10 @@ struct FileBrowserPanel: View {
     @State private var nuclearToastMessage = ""
     @State private var lastMovedFile: (source: String, destination: String, fileName: String)? = nil
 
+    // Double-click detection via selection timing
+    @State private var lastClickedItemID: FileItem.ID?
+    @State private var lastClickTime: Date = .distantPast
+
     let playlistManager: PlaylistManager?
 
     // Filter files to show only playlists if enabled
@@ -401,14 +405,30 @@ struct FileBrowserPanel: View {
                                 // Play button for media files
                                 if isMediaFile(item) {
                                     Button(action: {
+                                        shouldAutoPlay = true
                                         onItemDoubleClick(item)
                                     }) {
                                         Image(systemName: "play.circle.fill")
-                                            .font(.system(size: 14))
+                                            .font(.system(size: 16))
+                                            .foregroundColor(.accentColor)
+                                    }
+                                    .buttonStyle(.borderless)
+                                    .help("Play")
+                                }
+
+                                // Open button for folders
+                                if item.isDirectory {
+                                    Button(action: {
+                                        fileSystem.navigateToFolder(item.path)
+                                        currentMedia = nil
+                                        showMediaPlayer = false
+                                    }) {
+                                        Image(systemName: "arrow.right.circle.fill")
+                                            .font(.system(size: 16))
                                             .foregroundColor(.blue)
                                     }
                                     .buttonStyle(.borderless)
-                                    .help("Play (or press Enter)")
+                                    .help("Open folder")
                                 }
 
                                 if renamingItem?.id == item.id {
@@ -428,6 +448,19 @@ struct FileBrowserPanel: View {
                                 } else {
                                     Text(item.name)
                                         .lineLimit(1)
+                                }
+                            }
+                            .overlay {
+                                // Invisible double-click detector
+                                DoubleClickOverlay {
+                                    if item.isDirectory {
+                                        fileSystem.navigateToFolder(item.path)
+                                        currentMedia = nil
+                                        showMediaPlayer = false
+                                    } else if isMediaFile(item) {
+                                        shouldAutoPlay = true
+                                        onItemDoubleClick(item)
+                                    }
                                 }
                             }
                         }
@@ -540,17 +573,6 @@ struct FileBrowserPanel: View {
                         fileSystem.loadFiles()
                         return true
                     }
-                    .gesture(
-                        TapGesture(count: 2)
-                            .onEnded {
-                                // Handle double-click on table row
-                                if let selectedID = selectedItems.first,
-                                   let item = fileSystem.files.first(where: { $0.id == selectedID }),
-                                   isMediaFile(item) {
-                                    onItemDoubleClick(item)
-                                }
-                            }
-                    )
                     .onChange(of: selectedItems) { oldValue, newValue in
                         if let firstID = newValue.first,
                            let item = fileSystem.files.first(where: { $0.id == firstID }) {
@@ -1267,6 +1289,7 @@ struct FileBrowserPanel: View {
         guard let track = trackToPlay else { return }
 
         // Select and play
+        shouldAutoPlay = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
             self.selectedItems = [track.id]
             self.lastSelectedItem = track
@@ -1304,6 +1327,7 @@ struct FileBrowserPanel: View {
         guard let track = trackToPlay else { return }
 
         // Select and play
+        shouldAutoPlay = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
             self.selectedItems = [track.id]
             self.lastSelectedItem = track
@@ -1593,6 +1617,32 @@ struct TickerText: View {
                     startTicker() // Loop
                 }
             }
+        }
+    }
+}
+
+// MARK: - Double Click Overlay (NSViewRepresentable)
+struct DoubleClickOverlay: NSViewRepresentable {
+    let onDoubleClick: () -> Void
+
+    func makeNSView(context: Context) -> DoubleClickView {
+        let view = DoubleClickView()
+        view.onDoubleClick = onDoubleClick
+        return view
+    }
+
+    func updateNSView(_ nsView: DoubleClickView, context: Context) {
+        nsView.onDoubleClick = onDoubleClick
+    }
+}
+
+class DoubleClickView: NSView {
+    var onDoubleClick: (() -> Void)?
+
+    override func mouseDown(with event: NSEvent) {
+        super.mouseDown(with: event)
+        if event.clickCount == 2 {
+            onDoubleClick?()
         }
     }
 }
