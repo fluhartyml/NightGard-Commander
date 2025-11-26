@@ -69,12 +69,22 @@ class iTunesSearchService {
 
             // === PRIORITY 1: Check for Apple Music ID ===
             var appleMusicID: String?
+            let fileName = currentFile
 
-            // Check stored database
+            // Check stored database by exact path
             if let storedMeta = ShazamScannedDatabase.shared.getMetadata(for: audioFile),
                let storedID = storedMeta.appleMusicID, !storedID.isEmpty {
                 appleMusicID = storedID
-                print("🎯 [ITUNES] Found stored Apple ID: \(storedID)")
+                print("🎯 [ITUNES] Found stored Apple ID (by path): \(storedID)")
+            }
+
+            // Check stored database by filename (in case file was renamed/moved)
+            if appleMusicID == nil {
+                if let storedMeta = ShazamScannedDatabase.shared.findByFilename(fileName),
+                   let storedID = storedMeta.appleMusicID, !storedID.isEmpty {
+                    appleMusicID = storedID
+                    print("🎯 [ITUNES] Found stored Apple ID (by filename): \(storedID)")
+                }
             }
 
             // Check embedded in file
@@ -100,6 +110,9 @@ class iTunesSearchService {
                         year: iTunesData.year,
                         appleMusicID: id
                     )
+
+                    // Rate limit protection - 1 second between ID lookups
+                    try? await Task.sleep(nanoseconds: 1_000_000_000)
                     continue
                 }
             }
@@ -114,6 +127,9 @@ class iTunesSearchService {
             } else {
                 unmatchedCount += 1
             }
+
+            // Rate limit protection - 2 seconds between text searches
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
         }
 
         print("📊 [ITUNES] Done: \(matchedCount) matched, \(unmatchedCount) not found")
@@ -431,6 +447,15 @@ class iTunesSearchService {
     }
 
     private func saveMetadata(result: iTunesLookupResult, to url: URL) async throws {
+        let ext = url.pathExtension.lowercased()
+
+        // MP3 files: AVAssetExportSession can't write to MP3 format
+        // Skip metadata writing - file will be renamed instead
+        if ext == "mp3" {
+            print("⏭️ [ITUNES] Skipping MP3 metadata write (not supported)")
+            return
+        }
+
         let asset = AVURLAsset(url: url)
 
         // Prepare metadata items
@@ -492,8 +517,7 @@ class iTunesSearchService {
 
         exportSession.metadata = metadataItems
 
-        // Determine output file type
-        let ext = url.pathExtension.lowercased()
+        // Determine output file type (ext already defined above)
         let outputFileType: AVFileType
         switch ext {
         case "mp3":

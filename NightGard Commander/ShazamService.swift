@@ -1004,6 +1004,9 @@ class ShazamService {
 
                 session.delegate = delegate
 
+                // Capture settings value before entering async context
+                let formatUsesGenre = await MainActor.run { ShazamSettings.shared.formatUsesGenre }
+
                 // Add detection task
                 group.addTask {
                     await withCheckedContinuation { continuation in
@@ -1053,7 +1056,7 @@ class ShazamService {
                             // ONLY require review if format actually uses genre
                             var needsGenreReview = false
 
-                            if ShazamSettings.shared.formatUsesGenre {
+                            if formatUsesGenre {
                                 // Format includes genre - check if we need user input
                                 needsGenreReview = allGenres.count > 1 || allGenres.isEmpty
 
