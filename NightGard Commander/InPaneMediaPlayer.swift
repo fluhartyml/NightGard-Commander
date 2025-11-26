@@ -122,9 +122,34 @@ struct InPaneMediaPlayer: View {
                             .foregroundColor(.secondary)
                         }
 
-                        Text(media.name)
-                            .font(.caption)
-                            .lineLimit(1)
+                        // Show metadata from Shazam database if available
+                        if let storedMeta = ShazamScannedDatabase.shared.getMetadata(for: media.path) {
+                            VStack(spacing: 2) {
+                                if let title = storedMeta.title, !title.isEmpty {
+                                    Text(title)
+                                        .font(.caption)
+                                        .fontWeight(.medium)
+                                        .lineLimit(1)
+                                }
+                                if let artist = storedMeta.artist, !artist.isEmpty {
+                                    Text(artist)
+                                        .font(.caption2)
+                                        .foregroundColor(.secondary)
+                                        .lineLimit(1)
+                                }
+                                if let album = storedMeta.album, !album.isEmpty {
+                                    Text(album)
+                                        .font(.caption2)
+                                        .foregroundColor(.secondary.opacity(0.7))
+                                        .lineLimit(1)
+                                }
+                            }
+                        } else {
+                            // Fallback to filename
+                            Text(media.name)
+                                .font(.caption)
+                                .lineLimit(1)
+                        }
 
                         Text("\(formatTime(currentTime)) / \(formatTime(duration))")
                             .font(.caption2)
@@ -280,6 +305,12 @@ struct InPaneMediaPlayer: View {
                 }
                 .padding(.horizontal, 8)
                 .padding(.bottom, 4)
+
+                // Metadata footer - always show, with or without data
+                Divider()
+                MetadataFooterView(filePath: media.path, fileName: media.name)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
             }
             .background(Color.secondary.opacity(0.05))
             .onAppear {
@@ -371,11 +402,21 @@ struct InPaneMediaPlayer: View {
 
                         // Update fullscreen visualizer with track info
                         if let media = currentMedia {
-                            let trackName = (media.name as NSString).deletingPathExtension
-                            FullscreenVisualizerWindowManager.shared.updateTrackInfo(
-                                name: trackName,
-                                artist: ""
-                            )
+                            // Use Shazam metadata if available
+                            if let storedMeta = ShazamScannedDatabase.shared.getMetadata(for: media.path),
+                               let title = storedMeta.title, !title.isEmpty {
+                                FullscreenVisualizerWindowManager.shared.updateTrackInfo(
+                                    name: title,
+                                    artist: storedMeta.artist ?? ""
+                                )
+                            } else {
+                                // Fallback to filename
+                                let trackName = (media.name as NSString).deletingPathExtension
+                                FullscreenVisualizerWindowManager.shared.updateTrackInfo(
+                                    name: trackName,
+                                    artist: ""
+                                )
+                            }
                         }
 
                         if shouldAutoPlay {
@@ -661,5 +702,219 @@ struct AirPlayPicker: NSViewRepresentable {
 
     func updateNSView(_ nsView: AVRoutePickerView, context: Context) {
         nsView.player = player
+    }
+}
+
+// MARK: - Metadata Footer View
+struct MetadataFooterView: View {
+    let filePath: String
+    let fileName: String
+
+    @State private var embeddedMeta: EmbeddedMetadata?
+    @State private var isLoading = true
+
+    struct EmbeddedMetadata {
+        var title: String?
+        var artist: String?
+        var album: String?
+        var genre: String?
+        var year: String?
+        var appleMusicID: String?
+    }
+
+    var storedMeta: ShazamStoredMetadata? {
+        if let meta = ShazamScannedDatabase.shared.getMetadata(for: filePath) {
+            return meta
+        }
+        return ShazamScannedDatabase.shared.findByFilename(fileName)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if isLoading {
+                HStack {
+                    ProgressView()
+                        .scaleEffect(0.6)
+                    Text("Reading metadata...")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                }
+            } else {
+                // Track info row
+                HStack(spacing: 12) {
+                    if let artist = storedMeta?.artist ?? embeddedMeta?.artist, !artist.isEmpty {
+                        Label(artist, systemImage: "person.fill")
+                            .font(.caption2)
+                    }
+                    if let title = storedMeta?.title ?? embeddedMeta?.title, !title.isEmpty {
+                        Label(title, systemImage: "music.note")
+                            .font(.caption2)
+                    }
+                    if let album = storedMeta?.album ?? embeddedMeta?.album, !album.isEmpty {
+                        Label(album, systemImage: "opticaldisc")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                    if let genre = storedMeta?.genre ?? embeddedMeta?.genre, !genre.isEmpty {
+                        Label(genre, systemImage: "guitars")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                    if let year = storedMeta?.year ?? embeddedMeta?.year, !year.isEmpty {
+                        Text(year)
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                }
+
+                // IDs row - ALWAYS VISIBLE
+                HStack(spacing: 12) {
+                    // iTunes ID - always show, highlight missing
+                    let appleMusicID = storedMeta?.appleMusicID ?? embeddedMeta?.appleMusicID
+                    HStack(spacing: 4) {
+                        Image(systemName: "apple.logo")
+                            .font(.caption)
+                        if let id = appleMusicID, !id.isEmpty {
+                            Text(id)
+                                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        } else {
+                            Text("NO ID")
+                                .font(.system(size: 11, weight: .bold, design: .monospaced))
+                        }
+                    }
+                    .foregroundColor(appleMusicID != nil ? .pink : .red)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(appleMusicID != nil ? Color.pink.opacity(0.15) : Color.red.opacity(0.2))
+                    .cornerRadius(6)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(appleMusicID != nil ? Color.pink.opacity(0.3) : Color.red.opacity(0.5), lineWidth: 1)
+                    )
+
+                    // Shazam ID - always show, highlight missing
+                    let shazamID = storedMeta?.shazamID
+                    HStack(spacing: 4) {
+                        Image(systemName: "shazam.logo")
+                            .font(.caption)
+                        if let id = shazamID, !id.isEmpty {
+                            Text(String(id.prefix(10)))
+                                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        } else {
+                            Text("NO ID")
+                                .font(.system(size: 11, weight: .bold, design: .monospaced))
+                        }
+                    }
+                    .foregroundColor(shazamID != nil ? .blue : .orange)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(shazamID != nil ? Color.blue.opacity(0.15) : Color.orange.opacity(0.15))
+                    .cornerRadius(6)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(shazamID != nil ? Color.blue.opacity(0.3) : Color.orange.opacity(0.3), lineWidth: 1)
+                    )
+
+                    Spacer()
+
+                    // Source indicator
+                    if storedMeta != nil {
+                        Text("DB")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundColor(.green)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 2)
+                            .background(Color.green.opacity(0.2))
+                            .cornerRadius(4)
+                    } else if embeddedMeta != nil {
+                        Text("ID3")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundColor(.purple)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 2)
+                            .background(Color.purple.opacity(0.2))
+                            .cornerRadius(4)
+                    }
+                }
+            }
+        }
+        .onAppear {
+            loadEmbeddedMetadata()
+        }
+        .onChange(of: filePath) {
+            loadEmbeddedMetadata()
+        }
+    }
+
+    private func loadEmbeddedMetadata() {
+        isLoading = true
+        embeddedMeta = nil
+
+        Task {
+            let meta = await readEmbeddedMetadata()
+            await MainActor.run {
+                embeddedMeta = meta
+                isLoading = false
+            }
+        }
+    }
+
+    private func readEmbeddedMetadata() async -> EmbeddedMetadata? {
+        let url = URL(fileURLWithPath: filePath)
+        let asset = AVURLAsset(url: url)
+
+        var result = EmbeddedMetadata()
+        var foundAny = false
+
+        do {
+            let metadata = try await asset.load(.commonMetadata)
+
+            for item in metadata {
+                guard let key = item.commonKey?.rawValue else { continue }
+
+                switch key {
+                case "artist":
+                    result.artist = try? await item.load(.stringValue)
+                    if result.artist != nil { foundAny = true }
+                case "title":
+                    result.title = try? await item.load(.stringValue)
+                    if result.title != nil { foundAny = true }
+                case "albumName":
+                    result.album = try? await item.load(.stringValue)
+                    if result.album != nil { foundAny = true }
+                case "type":
+                    result.genre = try? await item.load(.stringValue)
+                    if result.genre != nil { foundAny = true }
+                case "creationDate":
+                    result.year = try? await item.load(.stringValue)
+                    if result.year != nil { foundAny = true }
+                default:
+                    break
+                }
+            }
+
+            // Check for iTunes ID
+            let formats = try await asset.load(.availableMetadataFormats)
+            for format in formats {
+                let formatMetadata = try await asset.loadMetadata(for: format)
+                for item in formatMetadata {
+                    if let identifier = item.identifier?.rawValue {
+                        if identifier.contains("itunes") || identifier.contains("cnID") || identifier.contains("plID") {
+                            if let value = try? await item.load(.stringValue), !value.isEmpty {
+                                result.appleMusicID = value
+                                foundAny = true
+                            } else if let numValue = try? await item.load(.numberValue) {
+                                result.appleMusicID = String(describing: numValue)
+                                foundAny = true
+                            }
+                        }
+                    }
+                }
+            }
+        } catch {
+            // Silent fail
+        }
+
+        return foundAny ? result : nil
     }
 }

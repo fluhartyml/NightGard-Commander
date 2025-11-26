@@ -20,6 +20,10 @@ struct ShazamSettingsPanel: View {
     @State private var isReformatting = false
     @State private var reformatResult: (renamed: Int, skipped: Int, errors: Int)?
 
+    // iTunes API state
+    @State private var isiTunesProcessing = false
+    @State private var iTunesResult: (processed: Int, renamed: Int, skipped: Int, errors: Int)?
+
     var body: some View {
         VStack(spacing: 20) {
             // Title
@@ -123,7 +127,7 @@ struct ShazamSettingsPanel: View {
                         .disabled(isReformatting || ShazamScannedDatabase.shared.count() == 0)
                     }
 
-                    // Show result if available
+                    // Show reformat result if available
                     if let result = reformatResult {
                         HStack(spacing: 12) {
                             Label("\(result.renamed) renamed", systemImage: "checkmark.circle.fill")
@@ -138,7 +142,47 @@ struct ShazamSettingsPanel: View {
                         .font(.caption)
                     }
 
-                    Text("Resetting allows files to be re-scanned. Metadata is stored for reformatting without re-fingerprinting.")
+                    Divider()
+
+                    // iTunes API section
+                    HStack {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("iTunes API Lookup")
+                            Text("Fetch fresh metadata using stored Apple Music IDs (no fingerprinting)")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        Spacer()
+                        Button(action: {
+                            processiTunesAPI()
+                        }) {
+                            if isiTunesProcessing {
+                                Label("Processing...", systemImage: "hourglass")
+                            } else {
+                                Label("Fetch & Rename", systemImage: "music.note.list")
+                            }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(.orange)
+                        .disabled(isiTunesProcessing || ShazamScannedDatabase.shared.count() == 0)
+                    }
+
+                    // Show iTunes result if available
+                    if let result = iTunesResult {
+                        HStack(spacing: 12) {
+                            Label("\(result.processed) fetched", systemImage: "arrow.down.circle.fill")
+                                .foregroundColor(.blue)
+                            Label("\(result.renamed) renamed", systemImage: "checkmark.circle.fill")
+                                .foregroundColor(.green)
+                            if result.errors > 0 {
+                                Label("\(result.errors) errors", systemImage: "exclamationmark.triangle.fill")
+                                    .foregroundColor(.red)
+                            }
+                        }
+                        .font(.caption)
+                    }
+
+                    Text("iTunes API bypasses Shazam rate limits. Only works for files with stored Apple Music IDs.")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
@@ -212,6 +256,20 @@ struct ShazamSettingsPanel: View {
             await MainActor.run {
                 reformatResult = result
                 isReformatting = false
+            }
+        }
+    }
+
+    private func processiTunesAPI() {
+        guard !isiTunesProcessing else { return }
+        isiTunesProcessing = true
+        iTunesResult = nil
+
+        Task {
+            let result = await ShazamService.shared.refreshAllfromITunes()
+            await MainActor.run {
+                iTunesResult = result
+                isiTunesProcessing = false
             }
         }
     }

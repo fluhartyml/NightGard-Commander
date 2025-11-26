@@ -50,6 +50,23 @@ class ShazamScannedDatabase {
         return scannedMetadata[filePath]
     }
 
+    /// Find metadata by filename (fallback when path doesn't match)
+    func findByFilename(_ filename: String) -> ShazamStoredMetadata? {
+        // Check currentFilename first (most likely match after rename)
+        if let match = scannedMetadata.first(where: { $0.value.currentFilename == filename }) {
+            return match.value
+        }
+        // Check originalFilename
+        if let match = scannedMetadata.first(where: { $0.value.originalFilename == filename }) {
+            return match.value
+        }
+        // Check if path ends with filename
+        if let match = scannedMetadata.first(where: { $0.key.hasSuffix("/\(filename)") }) {
+            return match.value
+        }
+        return nil
+    }
+
     /// Store full metadata for a scanned file
     func storeMetadata(
         filePath: String,
@@ -140,6 +157,18 @@ class ShazamScannedDatabase {
     /// Get files that can be reformatted (have metadata stored)
     func getReformattableFiles() -> [(path: String, metadata: ShazamStoredMetadata)] {
         return scannedMetadata.map { ($0.key, $0.value) }
+    }
+
+    /// Get all files that have Apple Music IDs (for iTunes API lookup)
+    func getAllWithAppleMusicID() -> [(path: String, metadata: ShazamStoredMetadata)] {
+        return scannedMetadata
+            .filter { $0.value.appleMusicID != nil && !$0.value.appleMusicID!.isEmpty }
+            .map { ($0.key, $0.value) }
+    }
+
+    /// Count files with Apple Music IDs
+    func countWithAppleMusicID() -> Int {
+        return scannedMetadata.filter { $0.value.appleMusicID != nil && !$0.value.appleMusicID!.isEmpty }.count
     }
 
     private func saveDatabase() {

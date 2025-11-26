@@ -45,6 +45,7 @@ class iTunesSearchService {
     var onFileUpdated: (() -> Void)?
 
     // Process all audio files in a folder
+    // Priority: Use Apple ID if available, otherwise text search
     @MainActor
     func processFolder(path: String) async {
         isProcessing = true
@@ -58,43 +59,201 @@ class iTunesSearchService {
         let audioFiles = findAudioFiles(in: path)
         totalFiles = audioFiles.count
 
+        print("🎵 [ITUNES] Processing \(audioFiles.count) files...")
+
         for audioFile in audioFiles {
-            if isCancelled {
-                break
-            }
+            if isCancelled { break }
 
             currentFile = (audioFile as NSString).lastPathComponent
+            processedFiles += 1
 
-            // Skip files that have already been scanned by Shazam (in persistent database)
-            if ShazamScannedDatabase.shared.hasBeenScanned(audioFile) {
-                print("⏭️ [ITUNES] Skipping (already scanned by Shazam): \(currentFile)")
-                processedFiles += 1
-                continue
+            // === PRIORITY 1: Check for Apple Music ID ===
+            var appleMusicID: String?
+
+            // Check stored database
+            if let storedMeta = ShazamScannedDatabase.shared.getMetadata(for: audioFile),
+               let storedID = storedMeta.appleMusicID, !storedID.isEmpty {
+                appleMusicID = storedID
+                print("🎯 [ITUNES] Found stored Apple ID: \(storedID)")
             }
 
-            // Skip files already in genre review queue (already matched, waiting for user)
-            if GenreReviewQueue.shared.items.contains(where: { $0.filePath == audioFile }) {
-                print("⏭️ [ITUNES] Skipping (already in genre review queue): \(currentFile)")
-                processedFiles += 1
-                continue
+            // Check embedded in file
+            if appleMusicID == nil {
+                appleMusicID = await readAppleMusicID(from: audioFile)
+                if let id = appleMusicID {
+                    print("🎯 [ITUNES] Found embedded Apple ID: \(id)")
+                }
             }
 
+            // === Use ID lookup if we have an ID ===
+            if let id = appleMusicID {
+                if let iTunesData = await lookupByID(appleMusicID: id) {
+                    matchedCount += 1
+
+                    // Rename file per format settings
+                    await renameAndUpdateFile(
+                        path: audioFile,
+                        artist: iTunesData.artist,
+                        title: iTunesData.title,
+                        album: iTunesData.album,
+                        genre: iTunesData.genre,
+                        year: iTunesData.year,
+                        appleMusicID: id
+                    )
+                    continue
+                }
+            }
+
+            // === FALLBACK: Text search ===
             let result = await lookupFile(path: audioFile)
             results.append(result)
 
             if result.matched {
                 matchedCount += 1
-
-                // Auto-update metadata
                 await updateFileMetadata(result: result)
             } else {
                 unmatchedCount += 1
             }
-
-            processedFiles += 1
         }
 
+        print("📊 [ITUNES] Done: \(matchedCount) matched, \(unmatchedCount) not found")
         isProcessing = false
+    }
+
+    // Lookup by Apple Music ID (direct, no searching)
+    private func lookupByID(appleMusicID: String) async -> (artist: String?, title: String?, album: String?, genre: String?, year: String?)? {
+        let urlString = "https://itunes.apple.com/lookup?id=\(appleMusicID)"
+        guard let url = URL(string: urlString) else { return nil }
+
+        do {
+            let (data, _) = try await URLSession.shared.data(from: url)
+            guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let results = json["results"] as? [[String: Any]],
+                  let track = results.first else {
+                print("❌ [ITUNES] No results for ID: \(appleMusicID)")
+                return nil
+            }
+
+            let title = track["trackName"] as? String
+            let artist = track["artistName"] as? String
+            let album = track["collectionName"] as? String
+            let genre = track["primaryGenreName"] as? String
+
+            var year: String?
+            if let releaseDate = track["releaseDate"] as? String {
+                year = String(releaseDate.prefix(4))
+            }
+
+            print("✅ [ITUNES] ID Lookup: \(artist ?? "?") - \(title ?? "?")")
+            return (artist, title, album, genre, year)
+        } catch {
+            print("❌ [ITUNES] ID Lookup error: \(error.localizedDescription)")
+            return nil
+        }
+    }
+
+    // Read Apple Music ID from file metadata
+    private func readAppleMusicID(from path: String) async -> String? {
+        let url = URL(fileURLWithPath: path)
+        let asset = AVURLAsset(url: url)
+
+        do {
+            let formats = try await asset.load(.availableMetadataFormats)
+            for format in formats {
+                let metadata = try await asset.loadMetadata(for: format)
+                for item in metadata {
+                    if let identifier = item.identifier?.rawValue {
+                        if identifier.contains("itunes") || identifier.contains("cnID") || identifier.contains("plID") {
+                            if let value = try? await item.load(.stringValue), !value.isEmpty {
+                                return value
+                            } else if let numValue = try? await item.load(.numberValue) {
+                                return String(describing: numValue)
+                            }
+                        }
+                    }
+                }
+            }
+        } catch {}
+        return nil
+    }
+
+    // Rename file and update database
+    private func renameAndUpdateFile(
+        path: String,
+        artist: String?,
+        title: String?,
+        album: String?,
+        genre: String?,
+        year: String?,
+        appleMusicID: String
+    ) async {
+        let originalFilename = (path as NSString).lastPathComponent
+        let fileURL = URL(fileURLWithPath: path)
+        let directory = fileURL.deletingLastPathComponent()
+        let ext = fileURL.pathExtension
+
+        // Store in database
+        ShazamScannedDatabase.shared.storeMetadata(
+            filePath: path,
+            artist: artist,
+            title: title,
+            album: album,
+            genre: genre,
+            year: year,
+            shazamID: nil,
+            appleMusicID: appleMusicID,
+            wasRenamed: false,
+            originalFilename: originalFilename,
+            currentFilename: originalFilename
+        )
+
+        // Generate new filename using format settings
+        guard let metadata = ShazamScannedDatabase.shared.getMetadata(for: path) else { return }
+
+        let blocks = ShazamSettings.shared.formatBlocks
+        var contentParts: [String] = []
+
+        for block in blocks {
+            switch block.field {
+            case .title:
+                if let t = title, !t.isEmpty { contentParts.append(t) }
+            case .artist:
+                if let a = artist, !a.isEmpty { contentParts.append(a) }
+            case .albumName:
+                if let a = album, !a.isEmpty { contentParts.append(a) }
+            case .genres:
+                if let g = genre, !g.isEmpty { contentParts.append(g) }
+            case .year, .releaseDate:
+                if let y = year, !y.isEmpty { contentParts.append(y) }
+            case .separator:
+                continue
+            default:
+                continue
+            }
+        }
+
+        let newName = contentParts.joined(separator: " - ")
+            .replacingOccurrences(of: "/", with: "-")
+            .replacingOccurrences(of: ":", with: "-") + "." + ext
+        let newURL = directory.appendingPathComponent(newName)
+
+        // Rename if different
+        if newURL.path != fileURL.path && !FileManager.default.fileExists(atPath: newURL.path) {
+            do {
+                try FileManager.default.moveItem(at: fileURL, to: newURL)
+                print("✅ [ITUNES] Renamed: \(originalFilename) → \(newName)")
+
+                ShazamScannedDatabase.shared.updateFilename(
+                    originalPath: path,
+                    newFilename: newName,
+                    newPath: newURL.path
+                )
+
+                await MainActor.run { onFileUpdated?() }
+            } catch {
+                print("❌ [ITUNES] Rename error: \(error.localizedDescription)")
+            }
+        }
     }
 
     func cancel() {
