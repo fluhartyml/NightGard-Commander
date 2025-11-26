@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import Combine
 
 struct BatchITunesDialog: View {
     @Binding var isPresented: Bool
