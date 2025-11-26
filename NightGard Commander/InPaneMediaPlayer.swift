@@ -20,6 +20,7 @@ struct InPaneMediaPlayer: View {
     @Binding var isCurrentlyPlaying: Bool  // Expose playing state to parent
     let fileSystem: FileSystemService
     let onSwitchToOpposite: () -> Void
+    var getOppositeFirstMediaURL: (() -> URL?)? = nil  // For crossfade to opposite pane
 
     @State private var player: AVPlayer?
     @State private var currentTime: Double = 0
@@ -32,6 +33,13 @@ struct InPaneMediaPlayer: View {
     @State private var audioAnalyzer = AudioAnalyzer()
     @State private var selectedVisualizer: VisualizerType = .spectrum
     @State private var showVisualizer = true
+
+    // Crossfade
+    @State private var crossfadeEnabled = false
+    @State private var crossfadePlayer: AVPlayer?
+    @State private var isCrossfading = false
+    @State private var crossfadingToOpposite = false
+    private let crossfadeDuration: Double = 5.0  // seconds
 
     private let timer = Timer.publish(every: 0.1, on: .main, in: .common).autoconnect()
 
@@ -85,7 +93,8 @@ struct InPaneMediaPlayer: View {
                             VisualizerContainer(
                                 type: selectedVisualizer,
                                 frequencyData: audioAnalyzer.frequencyData,
-                                amplitude: audioAnalyzer.amplitude
+                                amplitude: audioAnalyzer.amplitude,
+                                albumArtwork: albumArt
                             )
                             .aspectRatio(16/9, contentMode: .fit)
                             .cornerRadius(6)
@@ -287,6 +296,14 @@ struct InPaneMediaPlayer: View {
                     }
                     .toggleStyle(.switch)
                     .controlSize(.mini)
+
+                    Toggle(isOn: $crossfadeEnabled) {
+                        Text("✕ Fade")
+                            .font(.caption2)
+                    }
+                    .toggleStyle(.switch)
+                    .controlSize(.mini)
+                    .help("Crossfade between tracks (5 sec)")
                 }
                 .padding(.horizontal, 8)
                 .padding(.bottom, 4)
@@ -400,21 +417,23 @@ struct InPaneMediaPlayer: View {
                         self.duration = CMTimeGetSeconds(loadedDuration)
                         self.albumArt = artwork
 
-                        // Update fullscreen visualizer with track info
+                        // Update fullscreen visualizer with track info and artwork
                         if let media = currentMedia {
                             // Use Shazam metadata if available
                             if let storedMeta = ShazamScannedDatabase.shared.getMetadata(for: media.path),
                                let title = storedMeta.title, !title.isEmpty {
                                 FullscreenVisualizerWindowManager.shared.updateTrackInfo(
                                     name: title,
-                                    artist: storedMeta.artist ?? ""
+                                    artist: storedMeta.artist ?? "",
+                                    artwork: artwork
                                 )
                             } else {
                                 // Fallback to filename
                                 let trackName = (media.name as NSString).deletingPathExtension
                                 FullscreenVisualizerWindowManager.shared.updateTrackInfo(
                                     name: trackName,
-                                    artist: ""
+                                    artist: "",
+                                    artwork: artwork
                                 )
                             }
                         }
@@ -522,6 +541,11 @@ struct InPaneMediaPlayer: View {
         // Stop visualizer
         audioAnalyzer.stopDemoMode()
 
+        // Stop crossfade if in progress
+        crossfadePlayer?.pause()
+        crossfadePlayer = nil
+        isCrossfading = false
+
         if isWebloc {
             // Stop MusicKit player
             ApplicationMusicPlayer.shared.stop()
@@ -554,11 +578,19 @@ struct InPaneMediaPlayer: View {
 
     private func playPrevious() {
         guard currentTrackIndex > 0, currentTrackIndex < mediaFiles.count else { return }
+        // Cancel any crossfade in progress
+        crossfadePlayer?.pause()
+        crossfadePlayer = nil
+        isCrossfading = false
         currentMedia = mediaFiles[currentTrackIndex - 1]
     }
 
     private func playNext() {
         guard currentTrackIndex < mediaFiles.count - 1 else { return }
+        // Cancel any crossfade in progress
+        crossfadePlayer?.pause()
+        crossfadePlayer = nil
+        isCrossfading = false
         currentMedia = mediaFiles[currentTrackIndex + 1]
     }
 
@@ -575,9 +607,35 @@ struct InPaneMediaPlayer: View {
 
         if let currentItem = player.currentItem {
             currentTime = CMTimeGetSeconds(currentItem.currentTime())
+            let timeRemaining = duration - currentTime
+
+            // Crossfade logic - start fading when within crossfade duration
+            if crossfadeEnabled && !isCrossfading && timeRemaining <= crossfadeDuration && timeRemaining > 0.1 {
+                // Crossfade to next track in same pane
+                if autoPlayNext && currentTrackIndex < mediaFiles.count - 1 {
+                    startCrossfade(toOpposite: false)
+                }
+                // Crossfade to opposite pane
+                else if autoPlayOpposite, let getURL = getOppositeFirstMediaURL, getURL() != nil {
+                    startCrossfade(toOpposite: true)
+                }
+            }
+
+            // Update crossfade volumes during transition
+            if isCrossfading && timeRemaining > 0 {
+                let fadeProgress = 1.0 - (timeRemaining / crossfadeDuration)
+                player.volume = Float(1.0 - fadeProgress)
+                crossfadePlayer?.volume = Float(fadeProgress)
+            }
 
             // Handle end of media
             if currentTime >= duration - 0.1 && isCurrentlyPlaying {
+                // If crossfading, complete the transition
+                if isCrossfading {
+                    completeCrossfade()
+                    return
+                }
+
                 player.pause()
                 isCurrentlyPlaying = false
 
@@ -600,6 +658,87 @@ struct InPaneMediaPlayer: View {
                     currentTime = 0
                 }
             }
+        }
+    }
+
+    private func startCrossfade(toOpposite: Bool) {
+        var url: URL?
+
+        if toOpposite {
+            // Get first media file from opposite pane
+            guard let getURL = getOppositeFirstMediaURL, let oppositeURL = getURL() else { return }
+            url = oppositeURL
+            crossfadingToOpposite = true
+            print("🎵 [CROSSFADE] Starting crossfade to opposite pane: \(oppositeURL.lastPathComponent)")
+        } else {
+            // Get next track in same pane
+            guard currentTrackIndex < mediaFiles.count - 1 else { return }
+            let nextTrack = mediaFiles[currentTrackIndex + 1]
+            url = URL(fileURLWithPath: nextTrack.path)
+            crossfadingToOpposite = false
+            print("🎵 [CROSSFADE] Starting crossfade to: \(nextTrack.name)")
+        }
+
+        guard let targetURL = url else { return }
+
+        isCrossfading = true
+        let playerItem = AVPlayerItem(url: targetURL)
+
+        crossfadePlayer = AVPlayer(playerItem: playerItem)
+        crossfadePlayer?.volume = 0
+        crossfadePlayer?.play()
+    }
+
+    private func completeCrossfade() {
+        guard crossfadePlayer != nil else { return }
+
+        // Stop old player
+        player?.pause()
+        player = nil
+
+        if crossfadingToOpposite {
+            // Stop the crossfade player too - opposite pane will take over
+            crossfadePlayer?.pause()
+            crossfadePlayer = nil
+
+            // Reset state
+            isCrossfading = false
+            crossfadingToOpposite = false
+            isCurrentlyPlaying = false
+
+            // Switch to opposite pane (it will start fresh)
+            stopPlayback()
+            isVisible = false
+            onSwitchToOpposite()
+
+            print("🎵 [CROSSFADE] Completed transition to opposite pane")
+        } else {
+            // Swap crossfade player to main player
+            player = crossfadePlayer
+            player?.volume = 1.0
+            self.crossfadePlayer = nil
+
+            // Update track index and media
+            currentTrackIndex += 1
+            currentMedia = mediaFiles[currentTrackIndex]
+
+            // Reset crossfade state
+            isCrossfading = false
+            currentTime = 0
+
+            // Load new track duration
+            Task {
+                if let item = player?.currentItem {
+                    let loadedDuration = try? await item.asset.load(.duration)
+                    if let d = loadedDuration {
+                        await MainActor.run {
+                            duration = CMTimeGetSeconds(d)
+                        }
+                    }
+                }
+            }
+
+            print("🎵 [CROSSFADE] Completed transition to: \(mediaFiles[currentTrackIndex].name)")
         }
     }
 

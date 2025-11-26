@@ -163,14 +163,21 @@ struct ContentView: View {
 
     func startPlayingMedia(item: FileItem) {
         // Set media for the appropriate pane and auto-play
+        // Force refresh by setting to nil first (handles double-clicking same file)
         if focusedPane == .left {
-            leftCurrentMedia = item
+            leftCurrentMedia = nil
             showLeftMediaPlayer = true
             shouldAutoPlayLeft = true  // Auto-play on double-click/Enter
+            DispatchQueue.main.async {
+                self.leftCurrentMedia = item
+            }
         } else {
-            rightCurrentMedia = item
+            rightCurrentMedia = nil
             showRightMediaPlayer = true
             shouldAutoPlayRight = true  // Auto-play on double-click/Enter
+            DispatchQueue.main.async {
+                self.rightCurrentMedia = item
+            }
         }
     }
 
@@ -376,6 +383,17 @@ struct ContentView: View {
                         shouldAutoPlay: $shouldAutoPlayLeft,
                         isCurrentlyPlaying: $isLeftPlaying,
                         onSwitchToOpposite: switchLeftToRight,
+                        getOppositeFirstMediaURL: {
+                            // Get first media file from right pane
+                            let mediaExts = ["mp3", "m4a", "wav", "aiff", "aac", "flac", "ogg", "mp4", "mov", "m4v", "avi", "mkv"]
+                            if let firstMedia = rightFileSystem.files.first(where: { file in
+                                let ext = (file.name as NSString).pathExtension.lowercased()
+                                return mediaExts.contains(ext) || file.name.lowercased().hasSuffix(".media.webloc")
+                            }) {
+                                return URL(fileURLWithPath: firstMedia.path)
+                            }
+                            return nil
+                        },
                         otherPanePath: rightFileSystem.currentPath,
                         onRefreshOtherPane: {
                             leftFileSystem.loadFiles()
@@ -447,6 +465,17 @@ struct ContentView: View {
                         shouldAutoPlay: $shouldAutoPlayRight,
                         isCurrentlyPlaying: $isRightPlaying,
                         onSwitchToOpposite: switchRightToLeft,
+                        getOppositeFirstMediaURL: {
+                            // Get first media file from left pane
+                            let mediaExts = ["mp3", "m4a", "wav", "aiff", "aac", "flac", "ogg", "mp4", "mov", "m4v", "avi", "mkv"]
+                            if let firstMedia = leftFileSystem.files.first(where: { file in
+                                let ext = (file.name as NSString).pathExtension.lowercased()
+                                return mediaExts.contains(ext) || file.name.lowercased().hasSuffix(".media.webloc")
+                            }) {
+                                return URL(fileURLWithPath: firstMedia.path)
+                            }
+                            return nil
+                        },
                         otherPanePath: leftFileSystem.currentPath,
                         onRefreshOtherPane: {
                             leftFileSystem.loadFiles()

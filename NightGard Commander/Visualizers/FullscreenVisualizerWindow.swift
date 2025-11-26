@@ -26,6 +26,7 @@ class FullscreenVisualizerWindowManager: ObservableObject {
     @Published var visualizerType: VisualizerType = .spectrum
     @Published var trackName: String = ""
     @Published var artistName: String = ""
+    @Published var albumArtwork: NSImage? = nil
 
     private init() {}
 
@@ -110,9 +111,10 @@ class FullscreenVisualizerWindowManager: ObservableObject {
     }
 
     /// Update track info
-    func updateTrackInfo(name: String, artist: String) {
+    func updateTrackInfo(name: String, artist: String, artwork: NSImage? = nil) {
         trackName = name
         artistName = artist
+        albumArtwork = artwork
     }
 }
 
@@ -142,7 +144,8 @@ struct FullscreenVisualizerContent: View {
             VisualizerContainer(
                 type: manager.visualizerType,
                 frequencyData: manager.frequencyData,
-                amplitude: manager.amplitude
+                amplitude: manager.amplitude,
+                albumArtwork: manager.albumArtwork
             )
             .ignoresSafeArea()
 

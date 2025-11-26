@@ -22,6 +22,7 @@ struct FileBrowserPanel: View {
     @Binding var shouldAutoPlay: Bool  // Controls if media auto-plays on load
     @Binding var isCurrentlyPlaying: Bool  // Current playback state
     let onSwitchToOpposite: () -> Void
+    var getOppositeFirstMediaURL: (() -> URL?)? = nil  // For crossfade to opposite pane
     let otherPanePath: String
     let onRefreshOtherPane: () -> Void
     let onNavigateOtherPane: (String) -> Void
@@ -196,9 +197,9 @@ struct FileBrowserPanel: View {
                 .frame(width: 30)
                 .help("Create Apple Music Link File")
 
-                // Shazam folder button
+                // Shazam button - tap for selected file, right-click for folder
                 Button(action: {
-                    triggerShazamFolder()
+                    triggerShazamSelectedOrFolder()
                 }) {
                     Image(systemName: "shazam.logo.fill")
                 }
@@ -208,7 +209,7 @@ struct FileBrowserPanel: View {
                     Button(action: {
                         showBatchShazam = true
                     }) {
-                        Label("Shazam Current Folder", systemImage: "folder.fill")
+                        Label("Shazam All in Folder", systemImage: "folder.fill")
                     }
 
                     Button(action: {
@@ -240,9 +241,9 @@ struct FileBrowserPanel: View {
                         Label("Shazam Settings...", systemImage: "gear")
                     }
                 }
-                .help("Click to Shazam current folder | Right-click for settings & queue")
+                .help("Click to Shazam selected file | Right-click for folder scan")
 
-                // iTunes Lookup button
+                // iTunes Lookup button - tap for selected file, right-click for folder
                 Button(action: {
                     triggerITunesLookup()
                 }) {
@@ -252,18 +253,26 @@ struct FileBrowserPanel: View {
                 .tint(.purple)
                 .contextMenu {
                     Button(action: {
-                        showBatchITunes = true
+                        triggerITunesFolderLookup()
                     }) {
-                        Label("Search iTunes for Current Folder", systemImage: "folder.fill")
+                        Label("iTunes Lookup All in Folder", systemImage: "folder.fill")
                     }
 
                     Button(action: {
                         showQueueReview = true
                     }) {
-                        Label("Review Queue (\(ShazamQueue.shared.items.count + GenreReviewQueue.shared.items.count))", systemImage: "list.bullet")
+                        Label("Unmatched Queue (\(ShazamQueue.shared.items.count))", systemImage: "list.bullet")
                     }
+                    .disabled(ShazamQueue.shared.items.isEmpty)
+
+                    Button(action: {
+                        showUnifiedQueue = true
+                    }) {
+                        Label("Genre Review Queue (\(GenreReviewQueue.shared.items.count))", systemImage: "music.note.list")
+                    }
+                    .disabled(GenreReviewQueue.shared.items.isEmpty)
                 }
-                .help("Click to search iTunes for current file | Right-click for batch search & queue")
+                .help("Click to iTunes lookup selected file | Right-click for folder scan")
 
                 if fileSystem.canNavigateUp() {
                     Button(action: {
@@ -733,7 +742,8 @@ struct FileBrowserPanel: View {
                 shouldAutoPlay: $shouldAutoPlay,
                 isCurrentlyPlaying: $isCurrentlyPlaying,
                 fileSystem: fileSystem,
-                onSwitchToOpposite: onSwitchToOpposite
+                onSwitchToOpposite: onSwitchToOpposite,
+                getOppositeFirstMediaURL: getOppositeFirstMediaURL
             )
 
             // Breadcrumbs footer
@@ -1006,8 +1016,202 @@ struct FileBrowserPanel: View {
         }
     }
 
+    private func triggerShazamSelectedOrFolder() {
+        // Check if a media file is selected
+        if let selectedID = selectedItems.first,
+           let selectedFile = fileSystem.files.first(where: { $0.id == selectedID }),
+           isMediaFile(selectedFile) {
+
+            // BEFORE scanning: find the NEXT file's name (in case current file gets renamed)
+            var nextFileName: String? = nil
+            if autoPlayNext {
+                let mediaFiles = fileSystem.files.filter { isMediaFile($0) }
+                if let currentIndex = mediaFiles.firstIndex(where: { $0.id == selectedID }),
+                   currentIndex + 1 < mediaFiles.count {
+                    nextFileName = mediaFiles[currentIndex + 1].name
+                    print("📋 Next file will be: \(nextFileName!)")
+                }
+            }
+
+            // Scan the selected file
+            print("🔵 [SHAZAM] Scanning selected file: \(selectedFile.name)")
+            Task {
+                let result = await ShazamService.shared.processSingleFile(URL(fileURLWithPath: selectedFile.path))
+                await MainActor.run {
+                    // Refresh file list to show renamed file
+                    fileSystem.loadFiles()
+
+                    // Show toast with result
+                    if result.success {
+                        nuclearToastMessage = "✅ \(result.title ?? selectedFile.name)"
+                    } else {
+                        nuclearToastMessage = "❌ No match found"
+                    }
+                    showNuclearToast = true
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                        showNuclearToast = false
+                    }
+
+                    // Follow "Next" toggle - advance and continue scanning if enabled
+                    if autoPlayNext, let nextName = nextFileName {
+                        // Find and select the next file by name
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                            let mediaFiles = self.fileSystem.files.filter { self.isMediaFile($0) }
+                            if let nextFile = mediaFiles.first(where: { $0.name == nextName }) {
+                                self.selectedItems = [nextFile.id]
+                                self.lastSelectedItem = nextFile
+                                self.onItemSelect(nextFile)
+                                print("➡️ Advanced to: \(nextFile.name)")
+
+                                // Continue scanning the next file
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                                    self.triggerShazamSelectedOrFolder()
+                                }
+                            } else {
+                                print("⏹️ Next file not found or reached end")
+                            }
+                        }
+                    } else if autoPlayNext {
+                        print("⏹️ Reached end of folder")
+                    }
+                }
+            }
+        } else {
+            // No file selected - show hint
+            nuclearToastMessage = "Select a file to scan"
+            showNuclearToast = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                showNuclearToast = false
+            }
+        }
+    }
+
+    // Advance selection to next media file (without playing)
+    // Uses filename matching since IDs change after file list refresh
+    private func advanceSelectionToNextMedia() {
+        let mediaFiles = fileSystem.files.filter { isMediaFile($0) }
+        guard !mediaFiles.isEmpty else {
+            print("⏹️ No media files in folder")
+            selectedItems.removeAll()
+            return
+        }
+
+        // Find currently selected file by ID first, then by lastSelectedItem name
+        var currentIndex: Int? = nil
+
+        if let currentID = selectedItems.first {
+            currentIndex = mediaFiles.firstIndex(where: { $0.id == currentID })
+        }
+
+        // If ID not found (after refresh), try matching by filename
+        if currentIndex == nil, let lastName = lastSelectedItem?.name {
+            currentIndex = mediaFiles.firstIndex(where: { $0.name == lastName })
+            print("🔄 Found by filename: \(lastName)")
+        }
+
+        guard let index = currentIndex else {
+            print("⚠️ Could not find current file, selecting first")
+            if let firstFile = mediaFiles.first {
+                selectedItems = [firstFile.id]
+                lastSelectedItem = firstFile
+                onItemSelect(firstFile)
+            }
+            return
+        }
+
+        // Go to next
+        let nextIndex = index + 1
+        if nextIndex < mediaFiles.count {
+            let nextFile = mediaFiles[nextIndex]
+            selectedItems = [nextFile.id]
+            lastSelectedItem = nextFile
+            onItemSelect(nextFile)
+            print("➡️ Advanced to: \(nextFile.name)")
+        } else {
+            print("⏹️ Reached end of folder")
+            // Clear selection to stop the chain
+            selectedItems.removeAll()
+            lastSelectedItem = nil
+        }
+    }
+
     private func triggerITunesLookup() {
-        // Start batch iTunes lookup
+        print("🍎 [ITUNES BUTTON] Clicked! selectedItems count: \(selectedItems.count)")
+        print("🍎 [ITUNES BUTTON] selectedItems: \(selectedItems)")
+
+        // Check if a media file is selected
+        if let selectedID = selectedItems.first,
+           let selectedFile = fileSystem.files.first(where: { $0.id == selectedID }),
+           isMediaFile(selectedFile) {
+
+            // BEFORE scanning: find the NEXT file's name (in case current file gets renamed)
+            var nextFileName: String? = nil
+            if autoPlayNext {
+                let mediaFiles = fileSystem.files.filter { isMediaFile($0) }
+                if let currentIndex = mediaFiles.firstIndex(where: { $0.id == selectedID }),
+                   currentIndex + 1 < mediaFiles.count {
+                    nextFileName = mediaFiles[currentIndex + 1].name
+                    print("📋 Next file will be: \(nextFileName!)")
+                }
+            }
+
+            // Lookup the selected file via iTunes API
+            print("🍎 [ITUNES] Looking up selected file: \(selectedFile.name)")
+            Task {
+                let service = iTunesSearchService()
+                let result = await service.lookupAndRenameFile(URL(fileURLWithPath: selectedFile.path))
+                await MainActor.run {
+                    // Refresh file list to show renamed file
+                    fileSystem.loadFiles()
+
+                    // Show toast with result
+                    if result.success {
+                        nuclearToastMessage = "✅ \(result.title ?? selectedFile.name)"
+                    } else {
+                        nuclearToastMessage = "❌ \(result.error ?? "No match")"
+                    }
+                    showNuclearToast = true
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                        showNuclearToast = false
+                    }
+
+                    // Follow "Next" toggle - advance and continue scanning if enabled
+                    if autoPlayNext, let nextName = nextFileName {
+                        // Find and select the next file by name
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                            let mediaFiles = self.fileSystem.files.filter { self.isMediaFile($0) }
+                            if let nextFile = mediaFiles.first(where: { $0.name == nextName }) {
+                                self.selectedItems = [nextFile.id]
+                                self.lastSelectedItem = nextFile
+                                self.onItemSelect(nextFile)
+                                print("➡️ Advanced to: \(nextFile.name)")
+
+                                // Continue scanning the next file
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                                    self.triggerITunesLookup()
+                                }
+                            } else {
+                                print("⏹️ Next file not found or reached end")
+                            }
+                        }
+                    } else if autoPlayNext {
+                        print("⏹️ Reached end of folder")
+                    }
+                }
+            }
+        } else {
+            // No file selected - show hint
+            nuclearToastMessage = "Select a file to search"
+            showNuclearToast = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                showNuclearToast = false
+            }
+        }
+    }
+
+    private func triggerITunesFolderLookup() {
+        // Start batch iTunes lookup for folder
+        print("🍎 [ITUNES FOLDER] triggerITunesFolderLookup called - starting batch scan")
         showBatchITunes = true
     }
 

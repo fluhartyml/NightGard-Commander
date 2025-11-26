@@ -287,6 +287,156 @@ class ShazamService {
         isProcessing = false
     }
 
+    // Process a single file (for button tap) - returns success and title
+    struct SingleFileResult {
+        let success: Bool
+        let title: String?
+        let error: String?
+    }
+
+    func processSingleFile(_ fileURL: URL) async -> SingleFileResult {
+        let path = fileURL.path
+        let fileName = fileURL.lastPathComponent
+
+        print("🔵 [SHAZAM] Processing single file: \(fileName)")
+
+        // === STEP 1: Already done? ===
+        if let storedMeta = ShazamScannedDatabase.shared.getMetadata(for: path),
+           storedMeta.wasRenamed {
+            let title = [storedMeta.artist, storedMeta.title].compactMap { $0 }.joined(separator: " - ")
+            return SingleFileResult(success: true, title: title.isEmpty ? fileName : title, error: nil)
+        }
+
+        // === STEP 2: Do we have an iTunes ID anywhere? ===
+        var appleMusicID: String?
+        var embeddedArtist: String?
+        var embeddedTitle: String?
+        var embeddedAlbum: String?
+        var embeddedGenre: String?
+        var embeddedYear: String?
+
+        // Check stored database first
+        if let storedMeta = ShazamScannedDatabase.shared.getMetadata(for: path),
+           let storedID = storedMeta.appleMusicID, !storedID.isEmpty {
+            appleMusicID = storedID
+            print("🎯 Found stored iTunes ID: \(storedID)")
+        }
+
+        // Read embedded file metadata (ID3 tags)
+        if let embedded = await readFullEmbeddedMetadata(from: path) {
+            if appleMusicID == nil, let embeddedID = embedded.appleMusicID, !embeddedID.isEmpty {
+                appleMusicID = embeddedID
+                print("🎯 Found embedded iTunes ID: \(embeddedID)")
+            }
+            embeddedArtist = embedded.artist
+            embeddedTitle = embedded.title
+            embeddedAlbum = embedded.album
+            embeddedGenre = embedded.genre
+            embeddedYear = embedded.year
+        }
+
+        // === STEP 3: Got iTunes ID? Use iTunes API ===
+        if let id = appleMusicID {
+            if let iTunesData = await fetchFromiTunes(appleMusicID: id) {
+                await processWithMetadata(
+                    path: path,
+                    artist: iTunesData.artist,
+                    title: iTunesData.title,
+                    album: iTunesData.album,
+                    genre: iTunesData.genre,
+                    year: iTunesData.year,
+                    shazamID: nil,
+                    appleMusicID: id,
+                    source: "iTunes API"
+                )
+                let title = [iTunesData.artist, iTunesData.title].compactMap { $0 }.joined(separator: " - ")
+                return SingleFileResult(success: true, title: title.isEmpty ? nil : title, error: nil)
+            }
+        }
+
+        // === STEP 4: Has Artist + Title in ID3 tags? Rename directly! ===
+        if let artist = embeddedArtist, !artist.isEmpty,
+           let title = embeddedTitle, !title.isEmpty {
+            print("📝 Using ID3 tags: \(artist) - \(title)")
+            await processWithMetadata(
+                path: path,
+                artist: artist,
+                title: title,
+                album: embeddedAlbum,
+                genre: embeddedGenre,
+                year: embeddedYear,
+                shazamID: nil,
+                appleMusicID: nil,
+                source: "ID3 Tags"
+            )
+            let displayTitle = "\(artist) - \(title)"
+            return SingleFileResult(success: true, title: displayTitle, error: nil)
+        }
+
+        // === STEP 5: LAST RESORT - Shazam fingerprint ===
+        print("🎵 No metadata - Shazaming: \(fileName)")
+        let result = await detectFile(path: path)
+
+        if result.matched {
+            // Got iTunes ID from Shazam! Now use iTunes API for full metadata
+            if let newAppleMusicID = result.appleMusicID, !newAppleMusicID.isEmpty {
+                print("✅ Shazam found iTunes ID: \(newAppleMusicID)")
+
+                if let iTunesData = await fetchFromiTunes(appleMusicID: newAppleMusicID) {
+                    await processWithMetadata(
+                        path: path,
+                        artist: iTunesData.artist,
+                        title: iTunesData.title,
+                        album: iTunesData.album,
+                        genre: iTunesData.genre,
+                        year: iTunesData.year,
+                        shazamID: result.shazamID,
+                        appleMusicID: newAppleMusicID,
+                        source: "iTunes API (via Shazam)"
+                    )
+                    let title = [iTunesData.artist, iTunesData.title].compactMap { $0 }.joined(separator: " - ")
+                    return SingleFileResult(success: true, title: title.isEmpty ? nil : title, error: nil)
+                }
+            }
+
+            // Fallback: use Shazam metadata directly
+            let originalFilename = fileName
+
+            ShazamScannedDatabase.shared.storeMetadata(
+                filePath: path,
+                artist: result.artist,
+                title: result.title,
+                album: result.album,
+                genre: result.genre,
+                year: result.year,
+                shazamID: result.shazamID,
+                appleMusicID: result.appleMusicID,
+                wasRenamed: false,
+                originalFilename: originalFilename,
+                currentFilename: originalFilename
+            )
+
+            if result.needsGenreReview {
+                GenreReviewQueue.shared.add(result: result)
+            } else if ShazamSettings.shared.autoRename {
+                await renameAndSaveMetadata(result: result)
+            }
+
+            let title = [result.artist, result.title].compactMap { $0 }.joined(separator: " - ")
+            return SingleFileResult(success: true, title: title.isEmpty ? nil : title, error: nil)
+        } else {
+            // No match
+            if ShazamSettings.shared.queueUnmatched {
+                ShazamQueue.shared.add(
+                    filePath: result.filePath,
+                    fileName: result.fileName,
+                    error: result.error
+                )
+            }
+            return SingleFileResult(success: false, title: nil, error: result.error ?? "No match found")
+        }
+    }
+
     // Quick check for Apple Music ID in file metadata
     private func readAppleMusicID(from path: String) async -> String? {
         let url = URL(fileURLWithPath: path)
@@ -1406,11 +1556,43 @@ class ShazamService {
     private func saveMetadata(result: ShazamResult, to url: URL) async throws {
         let ext = url.pathExtension.lowercased()
 
-        // MP3 files: Skip metadata writing (AVAssetExportSession doesn't support MP3 output)
-        // Genre is already in filename, so just return success
+        // MP3 files: Use ID3TagWriter instead of AVAssetExportSession
         if ext == "mp3" {
-            print("💾 [METADATA] Skipping MP3 metadata write (not supported by AVAssetExportSession)")
-            print("   Genre already saved in filename: \(result.fileName)")
+            print("🎵 [METADATA] Writing ID3 tags to MP3...")
+
+            var metadata = ID3TagWriter.Metadata()
+            metadata.title = result.title
+            metadata.artist = result.artist
+            metadata.album = result.album
+            metadata.genre = result.genre
+            metadata.year = result.year
+
+            // If we have an Apple Music ID, fetch artwork from iTunes
+            if let appleMusicID = result.appleMusicID {
+                let artworkURL = "https://itunes.apple.com/lookup?id=\(appleMusicID)"
+                if let url = URL(string: artworkURL) {
+                    do {
+                        let (data, _) = try await URLSession.shared.data(from: url)
+                        if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                           let results = json["results"] as? [[String: Any]],
+                           let track = results.first,
+                           let artworkURLString = track["artworkUrl100"] as? String {
+                            // Get higher resolution artwork
+                            let highResURL = artworkURLString.replacingOccurrences(of: "100x100", with: "600x600")
+                            if let imageURL = URL(string: highResURL) {
+                                let (imageData, _) = try await URLSession.shared.data(from: imageURL)
+                                metadata.artworkData = imageData
+                                metadata.artworkMimeType = highResURL.contains(".png") ? "image/png" : "image/jpeg"
+                                print("🎨 [METADATA] Downloaded artwork for MP3")
+                            }
+                        }
+                    } catch {
+                        print("⚠️ [METADATA] Could not fetch artwork: \(error)")
+                    }
+                }
+            }
+
+            try ID3TagWriter.write(metadata: metadata, to: url)
             return
         }
 

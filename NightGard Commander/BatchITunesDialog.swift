@@ -14,6 +14,10 @@ struct BatchITunesDialog: View {
     let onFileUpdated: (() -> Void)?
     @State private var service = iTunesSearchService()
     @State private var showResults = false
+    @State private var startTime: Date?
+    @State private var elapsedSeconds: Int = 0
+
+    let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     var body: some View {
         VStack(spacing: 20) {
@@ -72,11 +76,17 @@ struct BatchITunesDialog: View {
                     StatView(icon: "checkmark.circle.fill", color: .green, label: "Matched", value: service.matchedCount)
                     StatView(icon: "exclamationmark.triangle.fill", color: .orange, label: "Not Found", value: service.unmatchedCount)
 
-                    if service.totalFiles > 0 {
+                    if service.totalFiles > 0 && service.processedFiles > 0 && elapsedSeconds > 0 {
+                        let avgTimePerFile = Double(elapsedSeconds) / Double(service.processedFiles)
                         let remaining = service.totalFiles - service.processedFiles
-                        let estimatedSeconds = remaining * 2 // ~2 seconds per file (API calls)
-                        let estimatedMinutes = estimatedSeconds / 60
-                        StatView(icon: "clock.fill", color: .blue, label: "Remaining", value: estimatedMinutes, suffix: "min")
+                        let estimatedSeconds = Int(avgTimePerFile * Double(remaining))
+
+                        if estimatedSeconds >= 60 {
+                            let estimatedMinutes = estimatedSeconds / 60
+                            StatView(icon: "clock.fill", color: .blue, label: "Remaining", value: estimatedMinutes, suffix: "min")
+                        } else {
+                            StatView(icon: "clock.fill", color: .blue, label: "Remaining", value: estimatedSeconds, suffix: "sec")
+                        }
                     }
                 }
 
@@ -102,11 +112,17 @@ struct BatchITunesDialog: View {
                 unmatchedCount: service.unmatchedCount
             )
         }
+        .onReceive(timer) { _ in
+            if let start = startTime, service.isProcessing {
+                elapsedSeconds = Int(Date().timeIntervalSince(start))
+            }
+        }
     }
 
     private func startProcessing() {
         // Set up file update callback
         service.onFileUpdated = onFileUpdated
+        startTime = Date()
 
         Task {
             await service.processFolder(path: folderPath)
