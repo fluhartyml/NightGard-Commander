@@ -547,11 +547,17 @@ struct FileBrowserPanel: View {
                     }
                     // DJ CURATION KEYBOARD SHORTCUTS
                     .onKeyPress(.return) {
-                        // Enter/Return = Play selected media file
+                        // Enter/Return = Open folder or play media
                         if let firstID = selectedItems.first,
-                           let item = fileSystem.files.first(where: { $0.id == firstID }),
-                           isMediaFile(item) {
-                            onItemDoubleClick(item)
+                           let item = fileSystem.files.first(where: { $0.id == firstID }) {
+                            if item.isDirectory {
+                                fileSystem.navigateToFolder(item.path)
+                                currentMedia = nil
+                                showMediaPlayer = false
+                            } else if isMediaFile(item) {
+                                shouldAutoPlay = true
+                                onItemDoubleClick(item)
+                            }
                             return .handled
                         }
                         return .ignored
@@ -642,14 +648,6 @@ struct FileBrowserPanel: View {
                                 // No selection or not a media file - play first track in folder
                                 playNextTrack()
                             }
-                        }
-                        return .handled
-                    }
-                    .onKeyPress(.return) {
-                        // Enter = Play selected item (like double-click)
-                        if let item = fileSystem.files.first(where: { selectedItems.contains($0.id) }) {
-                            shouldAutoPlay = true  // Auto-play on Enter
-                            onItemDoubleClick(item)
                         }
                         return .handled
                     }

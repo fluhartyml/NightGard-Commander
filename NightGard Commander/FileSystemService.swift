@@ -154,7 +154,14 @@ class FileSystemService {
             }
 
         } catch {
-            errorMessage = "Error loading directory '\(currentPath)': \(error.localizedDescription)"
+            // If we can't access the directory, fall back to home directory
+            let homeDir = FileManager.default.homeDirectoryForCurrentUser.path
+            if currentPath != homeDir {
+                currentPath = homeDir
+                loadFiles()  // Retry with home directory
+            } else {
+                errorMessage = "Error loading directory '\(currentPath)': \(error.localizedDescription)"
+            }
         }
     }
 
