@@ -22,6 +22,7 @@ struct UnifiedQueueReviewPanel: View {
     @State private var audioPlayer: AVAudioPlayer?
     @State private var currentlyPlayingPath: String?
     @State private var isPlaying = false
+    @State private var isDeepDiveRunning = false  // Prevent parallel deep dives
     let onFileRenamed: (() -> Void)?
 
     var unmatchedCount: Int {
@@ -131,6 +132,9 @@ struct UnifiedQueueReviewPanel: View {
                                     },
                                     onPlay: { filePath in
                                         playAudioFile(path: filePath)
+                                    },
+                                    onManualApply: { artist, title, genre in
+                                        applyManualEntry(item: item, artist: artist, title: title, genre: genre)
                                     }
                                 )
                             }
@@ -165,11 +169,16 @@ struct UnifiedQueueReviewPanel: View {
                     Button(action: {
                         deepDiveAll()
                     }) {
-                        Label("Deep Dive All (\(unmatchedQueue.items.count))", systemImage: "magnifyingglass.circle.fill")
+                        if isDeepDiveRunning {
+                            Label("Deep Diving...", systemImage: "hourglass")
+                        } else {
+                            Label("Deep Dive All (\(unmatchedQueue.items.count))", systemImage: "magnifyingglass.circle.fill")
+                        }
                     }
                     .buttonStyle(.borderedProminent)
-                    .tint(.purple)
-                    .help("Sample multiple positions in all files (30s, 60s, 90s, 120s)")
+                    .tint(isDeepDiveRunning ? .gray : .purple)
+                    .disabled(isDeepDiveRunning)
+                    .help(isDeepDiveRunning ? "Deep dive in progress..." : "Sample multiple positions in all files")
 
                     Button(action: {
                         moveUnmatchedToFolder()
@@ -349,6 +358,14 @@ struct UnifiedQueueReviewPanel: View {
     }
 
     private func deepDiveAll() {
+        // Prevent multiple parallel deep dive operations
+        guard !isDeepDiveRunning else {
+            print("⚠️ [DEEP DIVE ALL] Already running - ignoring duplicate request")
+            return
+        }
+
+        isDeepDiveRunning = true
+
         Task {
             print("🔍 [DEEP DIVE ALL] Starting deep dive for \(unmatchedQueue.items.count) files...")
 
@@ -357,6 +374,9 @@ struct UnifiedQueueReviewPanel: View {
             var stillFailedCount = 0
 
             for item in itemsToProcess {
+                // Remove from database first so scanner doesn't skip it
+                ShazamScannedDatabase.shared.removeFromDatabase(item.filePath)
+
                 print("🔍 [DEEP DIVE ALL] Processing: \(item.fileName)")
                 let service = ShazamService()
                 let result = await service.detectFileDeepDive(path: item.filePath)
@@ -365,6 +385,21 @@ struct UnifiedQueueReviewPanel: View {
                     if result.matched {
                         successCount += 1
                         unmatchedQueue.remove(id: item.id)
+
+                        // Store full metadata in database for reformatting
+                        ShazamScannedDatabase.shared.storeMetadata(
+                            filePath: item.filePath,
+                            artist: result.artist,
+                            title: result.title,
+                            album: result.album,
+                            genre: result.genre,
+                            year: result.year,
+                            shazamID: result.shazamID,
+                            appleMusicID: result.appleMusicID,
+                            wasRenamed: false,
+                            originalFilename: item.fileName,
+                            currentFilename: item.fileName
+                        )
 
                         if result.needsGenreReview {
                             genreQueue.add(result: result)
@@ -404,6 +439,7 @@ struct UnifiedQueueReviewPanel: View {
 
             await MainActor.run {
                 print("📊 [DEEP DIVE ALL] Complete: \(successCount) matched, \(stillFailedCount) still unmatched")
+                isDeepDiveRunning = false  // Allow new deep dive operations
                 if successCount > 0 {
                     onFileRenamed?() // Refresh file browser
                     // Switch to genre tab if we added any genre review items
@@ -417,6 +453,10 @@ struct UnifiedQueueReviewPanel: View {
 
     private func retryShazam(item: QueuedItem, deepDive: Bool) {
         Task {
+            // Remove from database first so scanner doesn't skip it
+            ShazamScannedDatabase.shared.removeFromDatabase(item.filePath)
+            print("🗑️ [RETRY] Removed from database: \(item.fileName)")
+
             let service = ShazamService()
             let result: ShazamResult
 
@@ -432,6 +472,21 @@ struct UnifiedQueueReviewPanel: View {
                 if result.matched {
                     // Success! Remove from unmatched queue
                     unmatchedQueue.remove(id: item.id)
+
+                    // Store full metadata in database for reformatting
+                    ShazamScannedDatabase.shared.storeMetadata(
+                        filePath: item.filePath,
+                        artist: result.artist,
+                        title: result.title,
+                        album: result.album,
+                        genre: result.genre,
+                        year: result.year,
+                        shazamID: result.shazamID,
+                        appleMusicID: result.appleMusicID,
+                        wasRenamed: false,
+                        originalFilename: item.fileName,
+                        currentFilename: item.fileName
+                    )
 
                     if result.needsGenreReview {
                         // Add to genre review queue
@@ -491,6 +546,65 @@ struct UnifiedQueueReviewPanel: View {
         }
     }
 
+    private func applyManualEntry(item: QueuedItem, artist: String, title: String, genre: String) {
+        Task {
+            print("✏️ [MANUAL] Renaming with parsed data: \(genre) - \(artist) - \(title)")
+
+            let fileURL = URL(fileURLWithPath: item.filePath)
+            let directory = fileURL.deletingLastPathComponent()
+            let ext = fileURL.pathExtension
+
+            // Build new filename: Genre - Artist - Title.ext
+            var nameParts: [String] = []
+            if !genre.isEmpty { nameParts.append(genre) }
+            if !artist.isEmpty { nameParts.append(artist) }
+            if !title.isEmpty { nameParts.append(title) }
+
+            let newName = nameParts.joined(separator: " - ")
+                .replacingOccurrences(of: "/", with: "-")
+                .replacingOccurrences(of: ":", with: "-")
+            let newFilename = newName + "." + ext
+            let newURL = directory.appendingPathComponent(newFilename)
+
+            do {
+                // Check if already same name
+                if newURL.path != fileURL.path {
+                    // Check if destination exists
+                    if FileManager.default.fileExists(atPath: newURL.path) {
+                        print("⚠️ [MANUAL] File already exists: \(newFilename)")
+                        return
+                    }
+
+                    try FileManager.default.moveItem(at: fileURL, to: newURL)
+                    print("✅ [MANUAL] Renamed to: \(newFilename)")
+
+                    // Store in database
+                    ShazamScannedDatabase.shared.storeMetadata(
+                        filePath: newURL.path,
+                        artist: artist,
+                        title: title,
+                        album: nil,
+                        genre: genre,
+                        year: nil,
+                        shazamID: nil,
+                        appleMusicID: nil,
+                        wasRenamed: true,
+                        originalFilename: item.fileName,
+                        currentFilename: newFilename
+                    )
+                }
+
+                await MainActor.run {
+                    // Remove from unmatched queue
+                    unmatchedQueue.remove(id: item.id)
+                    onFileRenamed?()
+                }
+            } catch {
+                print("❌ [MANUAL] Error renaming: \(error)")
+            }
+        }
+    }
+
     private func renameFileWithGenre(item: GenreReviewItem, genre: String) async {
         let fileURL = URL(fileURLWithPath: item.filePath)
         let directory = fileURL.deletingLastPathComponent()
@@ -507,6 +621,8 @@ struct UnifiedQueueReviewPanel: View {
             allGenres: item.allGenres,
             needsGenreReview: false,
             year: nil,
+            shazamID: nil,
+            appleMusicID: nil,
             matched: true,
             error: nil
         )
@@ -668,7 +784,7 @@ struct GenreSelectionRow: View {
     let onPlay: (String) -> Void
 
     @State private var selectedGenre: String
-    @State private var isExpanded = false
+    @State private var isExpanded: Bool
     @State private var customGenre = ""
     @State private var isProcessing = false
 
@@ -680,6 +796,8 @@ struct GenreSelectionRow: View {
         self.onRemove = onRemove
         self.onPlay = onPlay
         _selectedGenre = State(initialValue: item.selectedGenre ?? item.allGenres.first ?? "")
+        // Auto-expand if there are genre options to show
+        _isExpanded = State(initialValue: item.allGenres.count > 1 || item.allGenres.isEmpty)
     }
 
     var body: some View {
@@ -710,20 +828,57 @@ struct GenreSelectionRow: View {
                                     .font(.subheadline)
                                     .foregroundColor(.secondary)
                             }
-                            if item.allGenres.count > 0 {
-                                Text("• \(item.allGenres.count) genres")
-                                    .font(.caption)
-                                    .foregroundColor(.purple)
-                            }
                         }
 
                         Text(item.fileName)
                             .font(.caption)
                             .foregroundColor(.secondary)
                             .lineLimit(1)
+
+                        // Inline genre buttons - always visible
+                        if !item.allGenres.isEmpty {
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                HStack(spacing: 6) {
+                                    ForEach(item.allGenres, id: \.self) { genre in
+                                        Button(action: {
+                                            selectedGenre = genre
+                                        }) {
+                                            Text(genre)
+                                                .font(.caption2)
+                                                .padding(.horizontal, 8)
+                                                .padding(.vertical, 4)
+                                                .background(selectedGenre == genre ? Color.purple : Color.secondary.opacity(0.2))
+                                                .foregroundColor(selectedGenre == genre ? .white : .primary)
+                                                .cornerRadius(10)
+                                        }
+                                        .buttonStyle(.plain)
+                                    }
+                                }
+                            }
+                        }
                     }
 
                     Spacer()
+
+                    // Quick Apply button (visible when genre selected)
+                    if !selectedGenre.isEmpty {
+                        Button(action: {
+                            isProcessing = true
+                            onApply(selectedGenre)
+                        }) {
+                            if isProcessing {
+                                ProgressView()
+                                    .controlSize(.small)
+                            } else {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .font(.title2)
+                                    .foregroundColor(.green)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .help("Apply '\(selectedGenre)' and rename")
+                        .disabled(isProcessing)
+                    }
 
                     // Play/Pause button (always visible)
                     Button(action: {
@@ -857,9 +1012,65 @@ struct UnmatchedItemRow: View {
     let onDeepDive: () -> Void
     let onRemove: () -> Void
     let onPlay: (String) -> Void
+    let onManualApply: (String, String, String) -> Void  // artist, title, genre
 
     @State private var isExpanded = false
     @State private var isProcessing = false
+    @State private var showManualEntry = false
+    @State private var manualArtist: String
+    @State private var manualTitle: String
+    @State private var manualGenre = ""
+
+    // Parse filename to extract artist/title
+    init(item: QueuedItem, currentlyPlayingPath: String?, isPlaying: Bool, onRetry: @escaping () -> Void, onDeepDive: @escaping () -> Void, onRemove: @escaping () -> Void, onPlay: @escaping (String) -> Void, onManualApply: @escaping (String, String, String) -> Void) {
+        self.item = item
+        self.currentlyPlayingPath = currentlyPlayingPath
+        self.isPlaying = isPlaying
+        self.onRetry = onRetry
+        self.onDeepDive = onDeepDive
+        self.onRemove = onRemove
+        self.onPlay = onPlay
+        self.onManualApply = onManualApply
+
+        // Parse filename for artist/title
+        let (artist, title) = Self.parseFilename(item.fileName)
+        _manualArtist = State(initialValue: artist)
+        _manualTitle = State(initialValue: title)
+    }
+
+    // Parse common filename patterns to extract artist/title
+    static func parseFilename(_ filename: String) -> (artist: String, title: String) {
+        // Remove extension
+        let name = (filename as NSString).deletingPathExtension
+
+        // Try different patterns
+        // Pattern 1: "Artist - Title" or "Artist – Title"
+        let separators = [" - ", " – ", " — ", "_-_", " _ "]
+        for sep in separators {
+            if name.contains(sep) {
+                let parts = name.components(separatedBy: sep)
+                if parts.count >= 2 {
+                    let artist = parts[0].trimmingCharacters(in: .whitespaces)
+                    let title = parts.dropFirst().joined(separator: sep).trimmingCharacters(in: .whitespaces)
+                    // Skip if artist looks like a track number
+                    if !artist.isEmpty && !artist.allSatisfy({ $0.isNumber || $0 == " " }) {
+                        return (artist, title)
+                    }
+                }
+            }
+        }
+
+        // Pattern 2: "01 Title" or "Track 01 Title" - just use as title
+        let trackPattern = try? NSRegularExpression(pattern: "^(\\d+|Track\\s*\\d+)\\s+(.+)$", options: .caseInsensitive)
+        if let match = trackPattern?.firstMatch(in: name, range: NSRange(name.startIndex..., in: name)) {
+            if let titleRange = Range(match.range(at: 2), in: name) {
+                return ("", String(name[titleRange]))
+            }
+        }
+
+        // Pattern 3: Just use whole filename as title
+        return ("", name)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -958,6 +1169,67 @@ struct UnmatchedItemRow: View {
                     }
                     .padding(8)
                     .background(Color.secondary.opacity(0.1))
+                    .cornerRadius(6)
+
+                    // Manual entry section - always available
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Manual Entry (if you know the song):")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+
+                        HStack(spacing: 8) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Artist").font(.caption2).foregroundColor(.secondary)
+                                TextField("Artist", text: $manualArtist)
+                                    .textFieldStyle(.roundedBorder)
+                                    .frame(width: 150)
+                            }
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Title").font(.caption2).foregroundColor(.secondary)
+                                TextField("Title", text: $manualTitle)
+                                    .textFieldStyle(.roundedBorder)
+                                    .frame(width: 150)
+                            }
+                        }
+
+                        // Genre quick select
+                        Text("Genre:")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 6) {
+                                ForEach(["Pop", "Rock", "Electronic", "Hip-Hop", "R&B", "Country", "Jazz", "Classical", "Alternative", "Dance", "Soundtrack", "Ambient"], id: \.self) { genre in
+                                    Button(action: {
+                                        manualGenre = genre
+                                    }) {
+                                        Text(genre)
+                                            .font(.caption)
+                                            .padding(.horizontal, 10)
+                                            .padding(.vertical, 6)
+                                            .background(manualGenre == genre ? Color.green : Color.secondary.opacity(0.2))
+                                            .foregroundColor(manualGenre == genre ? .white : .primary)
+                                            .cornerRadius(12)
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+                        }
+
+                        if !manualArtist.isEmpty && !manualTitle.isEmpty && !manualGenre.isEmpty {
+                            Button(action: {
+                                isProcessing = true
+                                onManualApply(manualArtist, manualTitle, manualGenre)
+                            }) {
+                                Label("Rename to: \(manualGenre) - \(manualArtist) - \(manualTitle)", systemImage: "checkmark.circle.fill")
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(.green)
+                            .disabled(isProcessing)
+                        }
+                    }
+                    .padding(8)
+                    .background(Color.green.opacity(0.1))
                     .cornerRadius(6)
 
                     // Action buttons

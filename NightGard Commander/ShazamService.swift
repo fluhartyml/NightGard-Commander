@@ -21,6 +21,8 @@ struct ShazamResult {
     var allGenres: [String]  // All available genres from Shazam
     var needsGenreReview: Bool  // True if user should manually pick genre
     var year: String?
+    var shazamID: String?       // Unique Shazam fingerprint database ID
+    var appleMusicID: String?   // iTunes/Apple Music catalog ID
     var matched: Bool
     var error: String?
 }
@@ -28,6 +30,8 @@ struct ShazamResult {
 // Batch Shazam processor
 @Observable
 class ShazamService {
+    static let shared = ShazamService()
+
     // Progress tracking
     var isProcessing = false
     var totalFiles = 0
@@ -89,11 +93,33 @@ class ShazamService {
             let result = await detectFile(path: audioFile)
             results.append(result)
 
+            // Check for rate limiting (error 201) and back off
+            if let error = result.error, error.contains("201") {
+                print("⚠️ [SHAZAM] Rate limited (error 201) - waiting 30 seconds before continuing...")
+                try? await Task.sleep(nanoseconds: 30_000_000_000) // 30 second backoff
+            } else {
+                // Normal delay between files to avoid rate limiting
+                try? await Task.sleep(nanoseconds: 2_000_000_000) // 2 seconds between files
+            }
+
             if result.matched {
                 matchedCount += 1
 
-                // Mark file as scanned in database (prevent re-scanning)
-                ShazamScannedDatabase.shared.markAsScanned(audioFile)
+                // Store full metadata in database (enables reformatting without re-scanning)
+                let originalFilename = (audioFile as NSString).lastPathComponent
+                ShazamScannedDatabase.shared.storeMetadata(
+                    filePath: audioFile,
+                    artist: result.artist,
+                    title: result.title,
+                    album: result.album,
+                    genre: result.genre,
+                    year: result.year,
+                    shazamID: result.shazamID,
+                    appleMusicID: result.appleMusicID,
+                    wasRenamed: false,
+                    originalFilename: originalFilename,
+                    currentFilename: originalFilename
+                )
 
                 // Check if file needs genre review
                 if result.needsGenreReview {
@@ -137,6 +163,106 @@ class ShazamService {
         isCancelled = true
     }
 
+    // Reformat all files with stored metadata using current format
+    // This lets users change filename format and apply it without re-scanning
+    @MainActor
+    func reformatAllFromDatabase() async -> (renamed: Int, skipped: Int, errors: Int) {
+        let allMetadata = ShazamScannedDatabase.shared.getReformattableFiles()
+        var renamed = 0
+        var skipped = 0
+        var errors = 0
+
+        print("🔄 [REFORMAT] Starting batch reformat of \(allMetadata.count) files")
+
+        for (path, metadata) in allMetadata {
+            // Skip if file doesn't exist at stored path
+            guard FileManager.default.fileExists(atPath: path) else {
+                print("⏭️ [REFORMAT] File not found, skipping: \(path)")
+                skipped += 1
+                continue
+            }
+
+            let fileURL = URL(fileURLWithPath: path)
+            let directory = fileURL.deletingLastPathComponent()
+            let ext = fileURL.pathExtension
+
+            // Generate new filename using current format and stored metadata
+            let newName = generateFilenameFromMetadata(metadata, extension: ext)
+            let newURL = directory.appendingPathComponent(newName)
+
+            // Skip if filename unchanged
+            if newURL.path == fileURL.path {
+                print("⏭️ [REFORMAT] Already correctly named: \(metadata.currentFilename)")
+                skipped += 1
+                continue
+            }
+
+            // Check if destination already exists
+            if FileManager.default.fileExists(atPath: newURL.path) {
+                print("⚠️ [REFORMAT] Destination exists, skipping: \(newName)")
+                skipped += 1
+                continue
+            }
+
+            do {
+                try FileManager.default.moveItem(at: fileURL, to: newURL)
+                print("✅ [REFORMAT] Renamed: \(metadata.currentFilename) → \(newName)")
+
+                // Update database with new path
+                ShazamScannedDatabase.shared.updateFilename(
+                    originalPath: path,
+                    newFilename: newName,
+                    newPath: newURL.path
+                )
+
+                renamed += 1
+            } catch {
+                print("❌ [REFORMAT] Error renaming \(metadata.currentFilename): \(error.localizedDescription)")
+                errors += 1
+            }
+        }
+
+        print("📊 [REFORMAT] Complete: \(renamed) renamed, \(skipped) skipped, \(errors) errors")
+
+        // Notify that files were renamed
+        await MainActor.run {
+            onFileRenamed?()
+        }
+
+        return (renamed, skipped, errors)
+    }
+
+    // Generate filename from stored metadata
+    private func generateFilenameFromMetadata(_ metadata: ShazamStoredMetadata, extension ext: String) -> String {
+        let blocks = ShazamSettings.shared.formatBlocks
+        var contentParts: [String] = []
+
+        for block in blocks {
+            switch block.field {
+            case .title:
+                if let title = metadata.title, !title.isEmpty { contentParts.append(title) }
+            case .artist:
+                if let artist = metadata.artist, !artist.isEmpty { contentParts.append(artist) }
+            case .albumName:
+                if let album = metadata.album, !album.isEmpty { contentParts.append(album) }
+            case .genres:
+                if let genre = metadata.genre, !genre.isEmpty { contentParts.append(genre) }
+            case .year, .releaseDate:
+                if let year = metadata.year, !year.isEmpty { contentParts.append(year) }
+            case .separator:
+                continue
+            default:
+                continue
+            }
+        }
+
+        let name = contentParts.joined(separator: " - ")
+        let sanitized = name.replacingOccurrences(of: "/", with: "-")
+                            .replacingOccurrences(of: ":", with: "-")
+
+        return sanitized + "." + ext
+    }
+
     // Deep dive detection - tries multiple positions in the song
     @MainActor
     func detectFileDeepDive(path: String) async -> ShazamResult {
@@ -151,6 +277,8 @@ class ShazamService {
                 fileName: currentFile,
                 allGenres: [],
                 needsGenreReview: false,
+                shazamID: nil,
+                appleMusicID: nil,
                 matched: false,
                 error: "Could not open audio file"
             )
@@ -168,6 +296,8 @@ class ShazamService {
                 fileName: currentFile,
                 allGenres: [],
                 needsGenreReview: false,
+                shazamID: nil,
+                appleMusicID: nil,
                 matched: false,
                 error: "File too short (likely sound effect)"
             )
@@ -221,8 +351,14 @@ class ShazamService {
                 print("❌ [DEEP DIVE] No match at position \(Int(position))s")
             }
 
-            // Longer delay between attempts to avoid rate limiting (Error 201)
-            try? await Task.sleep(nanoseconds: 3_000_000_000) // 3 seconds
+            // Check for rate limiting (error 201) and back off significantly
+            if let error = result.error, error.contains("201") {
+                print("⚠️ [DEEP DIVE] Rate limited (error 201) - waiting 30 seconds...")
+                try? await Task.sleep(nanoseconds: 30_000_000_000) // 30 second backoff
+            } else {
+                // Normal delay between attempts to avoid rate limiting
+                try? await Task.sleep(nanoseconds: 5_000_000_000) // 5 seconds (increased from 3)
+            }
         }
 
         print("❌ [DEEP DIVE] No matches found at any position")
@@ -231,6 +367,8 @@ class ShazamService {
             fileName: currentFile,
             allGenres: [],
             needsGenreReview: false,
+            shazamID: nil,
+            appleMusicID: nil,
             matched: false,
             error: "No match found (tried multiple positions)"
         )
@@ -294,6 +432,8 @@ class ShazamService {
                                     fileName: fileName,
                                     allGenres: [],
                                     needsGenreReview: false,
+                                    shazamID: nil,
+                                    appleMusicID: nil,
                                     matched: false,
                                     error: "No match found"
                                 ))
@@ -318,22 +458,40 @@ class ShazamService {
                                                      !fileName.hasPrefix("Track ") // Avoid false positives
 
                             // Determine if user needs to manually pick genre
-                            var needsGenreReview = allGenres.count > 1 || allGenres.isEmpty
+                            // ONLY require review if format actually uses genre
+                            var needsGenreReview = false
 
-                            if fileHasGenrePrefix {
-                                // File already has "Genre - Artist - Title" format
-                                // Extract genre from filename
-                                if let filenameGenre = parts.first {
-                                    print("   ℹ️ File already has genre prefix: \(filenameGenre) - skipping review")
-                                    needsGenreReview = false
+                            if ShazamSettings.shared.formatUsesGenre {
+                                // Format includes genre - check if we need user input
+                                needsGenreReview = allGenres.count > 1 || allGenres.isEmpty
+
+                                if fileHasGenrePrefix {
+                                    // File already has "Genre - Artist - Title" format
+                                    // Extract genre from filename
+                                    if let filenameGenre = parts.first {
+                                        print("   ℹ️ File already has genre prefix: \(filenameGenre) - skipping review")
+                                        needsGenreReview = false
+                                    }
+                                } else if allGenres.isEmpty {
+                                    print("   ⚠️ No genre available - needs manual review")
+                                } else if allGenres.count > 1 {
+                                    print("   ⚠️ Multiple genres available (\(allGenres.count)) - needs manual review: \(allGenres.joined(separator: ", "))")
+                                } else if let genre = genre {
+                                    print("   Using Genre: \(genre)")
                                 }
-                            } else if allGenres.isEmpty {
-                                print("   ⚠️ No genre available - needs manual review")
-                            } else if allGenres.count > 1 {
-                                print("   ⚠️ Multiple genres available (\(allGenres.count)) - needs manual review: \(allGenres.joined(separator: ", "))")
-                            } else if let genre = genre {
-                                print("   Using Genre: \(genre)")
+                            } else {
+                                // Format doesn't use genre - skip review entirely
+                                print("   ℹ️ Format doesn't use genre - skipping genre review")
+                                if let genre = genre {
+                                    print("   Genre (for metadata only): \(genre)")
+                                }
                             }
+
+                            // Get Shazam and Apple Music IDs
+                            let shazamID = mediaItem.shazamID
+                            let appleMusicID = mediaItem.appleMusicID
+                            print("   Shazam ID: \(shazamID ?? "nil")")
+                            print("   Apple Music ID: \(appleMusicID ?? "nil")")
 
                             continuation.resume(returning: ShazamResult(
                                 filePath: path,
@@ -345,6 +503,8 @@ class ShazamService {
                                 allGenres: allGenres,
                                 needsGenreReview: needsGenreReview,
                                 year: year,
+                                shazamID: shazamID,
+                                appleMusicID: appleMusicID,
                                 matched: true,
                                 error: nil
                             ))
@@ -362,6 +522,8 @@ class ShazamService {
                                 fileName: fileName,
                                 allGenres: [],
                                 needsGenreReview: false,
+                                shazamID: nil,
+                                appleMusicID: nil,
                                 matched: false,
                                 error: "No match found"
                             ))
@@ -379,6 +541,8 @@ class ShazamService {
                                 fileName: fileName,
                                 allGenres: [],
                                 needsGenreReview: false,
+                                shazamID: nil,
+                                appleMusicID: nil,
                                 matched: false,
                                 error: error.localizedDescription
                             ))
@@ -399,6 +563,8 @@ class ShazamService {
                         fileName: fileName,
                         allGenres: [],
                         needsGenreReview: false,
+                        shazamID: nil,
+                        appleMusicID: nil,
                         matched: false,
                         error: "Detection timeout"
                     )
@@ -413,6 +579,8 @@ class ShazamService {
                         fileName: fileName,
                         allGenres: [],
                         needsGenreReview: false,
+                        shazamID: nil,
+                        appleMusicID: nil,
                         matched: false,
                         error: "Unknown error"
                     )
@@ -423,6 +591,8 @@ class ShazamService {
                     fileName: fileName,
                     allGenres: [],
                     needsGenreReview: false,
+                    shazamID: nil,
+                    appleMusicID: nil,
                     matched: false,
                     error: "Task failed"
                 )
@@ -434,6 +604,8 @@ class ShazamService {
                 fileName: fileName,
                 allGenres: [],
                 needsGenreReview: false,
+                shazamID: nil,
+                appleMusicID: nil,
                 matched: false,
                 error: error.localizedDescription
             )
@@ -443,12 +615,19 @@ class ShazamService {
     private func createSignature(from url: URL, startOffset: Double = 0.0, duration: Double = 10.0) async throws -> SHSignature {
         print("🎵 [SHAZAM] Opening audio file...")
         let audioFile = try AVAudioFile(forReading: url)
-        let format = audioFile.processingFormat
-        print("🎵 [SHAZAM] Audio format: \(format.sampleRate)Hz, \(format.channelCount) channels")
+        let sourceFormat = audioFile.processingFormat
+        print("🎵 [SHAZAM] Source format: \(sourceFormat.sampleRate)Hz, \(sourceFormat.channelCount) channels")
 
-        // Calculate start frame and duration
-        let startFrame = AVAudioFramePosition(format.sampleRate * startOffset)
-        let maxFrames = AVAudioFrameCount(format.sampleRate * duration)
+        // Use standard format that ShazamKit expects (like iPhone microphone)
+        let targetSampleRate: Double = 44100.0
+        guard let targetFormat = AVAudioFormat(standardFormatWithSampleRate: targetSampleRate, channels: 1) else {
+            throw NSError(domain: "ShazamService", code: 1, userInfo: [NSLocalizedDescriptionKey: "Failed to create target format"])
+        }
+        print("🎵 [SHAZAM] Target format: \(targetFormat.sampleRate)Hz, \(targetFormat.channelCount) channel (mono)")
+
+        // Calculate frames in source format
+        let startFrame = AVAudioFramePosition(sourceFormat.sampleRate * startOffset)
+        let maxFrames = AVAudioFrameCount(sourceFormat.sampleRate * duration)
         let totalLength = audioFile.length
 
         // Ensure we don't read beyond file length
@@ -456,10 +635,10 @@ class ShazamService {
         let remainingFrames = AVAudioFrameCount(totalLength - actualStartFrame)
         let frameCount = min(maxFrames, remainingFrames)
 
-        print("🎵 [SHAZAM] Starting at \(startOffset)s, reading \(duration)s (~\(Double(frameCount) / format.sampleRate) seconds actual)")
+        print("🎵 [SHAZAM] Starting at \(startOffset)s, reading \(duration)s")
 
-        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount) else {
-            print("❌ [SHAZAM] Failed to create audio buffer")
+        guard let sourceBuffer = AVAudioPCMBuffer(pcmFormat: sourceFormat, frameCapacity: frameCount) else {
+            print("❌ [SHAZAM] Failed to create source buffer")
             throw NSError(domain: "ShazamService", code: 1, userInfo: [NSLocalizedDescriptionKey: "Failed to create audio buffer"])
         }
 
@@ -467,14 +646,43 @@ class ShazamService {
         audioFile.framePosition = actualStartFrame
 
         // Read the needed frames
-        buffer.frameLength = frameCount
-        print("🎵 [SHAZAM] Reading audio data from \(actualStartFrame)...")
-        try audioFile.read(into: buffer, frameCount: frameCount)
+        print("🎵 [SHAZAM] Reading audio data...")
+        try audioFile.read(into: sourceBuffer, frameCount: frameCount)
         print("🎵 [SHAZAM] Audio data read successfully")
 
-        print("🎵 [SHAZAM] Generating signature...")
+        // Convert to target format (44.1kHz mono - like iPhone microphone)
+        let targetFrameCount = AVAudioFrameCount(Double(frameCount) * targetSampleRate / sourceFormat.sampleRate)
+        guard let targetBuffer = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: targetFrameCount) else {
+            print("❌ [SHAZAM] Failed to create target buffer")
+            throw NSError(domain: "ShazamService", code: 1, userInfo: [NSLocalizedDescriptionKey: "Failed to create target buffer"])
+        }
+
+        // Use converter to resample and convert to mono
+        guard let converter = AVAudioConverter(from: sourceFormat, to: targetFormat) else {
+            print("⚠️ [SHAZAM] Could not create converter, using source format")
+            // Fall back to source format
+            let signatureGenerator = SHSignatureGenerator()
+            try signatureGenerator.append(sourceBuffer, at: nil)
+            return signatureGenerator.signature()
+        }
+
+        var error: NSError?
+        let inputBlock: AVAudioConverterInputBlock = { inNumPackets, outStatus in
+            outStatus.pointee = .haveData
+            return sourceBuffer
+        }
+
+        converter.convert(to: targetBuffer, error: &error, withInputFrom: inputBlock)
+        if let error = error {
+            print("⚠️ [SHAZAM] Conversion error: \(error), using source format")
+            let signatureGenerator = SHSignatureGenerator()
+            try signatureGenerator.append(sourceBuffer, at: nil)
+            return signatureGenerator.signature()
+        }
+
+        print("🎵 [SHAZAM] Converted to 44.1kHz mono, generating signature...")
         let signatureGenerator = SHSignatureGenerator()
-        try signatureGenerator.append(buffer, at: nil)
+        try signatureGenerator.append(targetBuffer, at: nil)
         let signature = signatureGenerator.signature()
         print("🎵 [SHAZAM] Signature generated successfully")
 
@@ -504,6 +712,13 @@ class ShazamService {
             if newURL.path != fileURL.path {
                 try FileManager.default.moveItem(at: fileURL, to: newURL)
                 print("✅ [SHAZAM] Renamed to: \(newName)")
+
+                // Update database with new filename/path
+                ShazamScannedDatabase.shared.updateFilename(
+                    originalPath: fileURL.path,
+                    newFilename: newName,
+                    newPath: newURL.path
+                )
 
                 // Notify that file was renamed
                 await MainActor.run {
@@ -544,6 +759,13 @@ class ShazamService {
                 try FileManager.default.moveItem(at: fileURL, to: newURL)
                 print("✅ [SHAZAM] Renamed to: \(newName)")
 
+                // Update database with new filename/path
+                ShazamScannedDatabase.shared.updateFilename(
+                    originalPath: fileURL.path,
+                    newFilename: newName,
+                    newPath: newURL.path
+                )
+
                 // Notify that file was renamed
                 await MainActor.run {
                     onFileRenamed?()
@@ -556,31 +778,30 @@ class ShazamService {
 
     private func generateFilename(from result: ShazamResult, extension ext: String) -> String {
         let blocks = ShazamSettings.shared.formatBlocks
-        var parts: [String] = []
+        var contentParts: [String] = []  // Only actual content, no separators
 
         for block in blocks {
             switch block.field {
             case .title:
-                if let title = result.title { parts.append(title) }
+                if let title = result.title, !title.isEmpty { contentParts.append(title) }
             case .artist:
-                if let artist = result.artist { parts.append(artist) }
+                if let artist = result.artist, !artist.isEmpty { contentParts.append(artist) }
             case .albumName:
-                if let album = result.album { parts.append(album) }
+                if let album = result.album, !album.isEmpty { contentParts.append(album) }
             case .genres:
-                if let genre = result.genre { parts.append(genre) }
+                if let genre = result.genre, !genre.isEmpty { contentParts.append(genre) }
             case .year, .releaseDate:
-                if let year = result.year { parts.append(year) }
+                if let year = result.year, !year.isEmpty { contentParts.append(year) }
             case .separator:
-                // Only add separator if there's already content
-                if !parts.isEmpty {
-                    parts.append(" - ")
-                }
+                // Separators are handled by joining, skip here
+                continue
             default:
                 continue
             }
         }
 
-        let name = parts.joined(separator: "")
+        // Join non-empty parts with " - " separator
+        let name = contentParts.joined(separator: " - ")
         let sanitized = name.replacingOccurrences(of: "/", with: "-")
                             .replacingOccurrences(of: ":", with: "-")
 

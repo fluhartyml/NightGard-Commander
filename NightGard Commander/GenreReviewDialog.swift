@@ -272,6 +272,8 @@ struct GenreReviewDialog: View {
             allGenres: item.allGenres,
             needsGenreReview: false,
             year: nil,
+            shazamID: nil,
+            appleMusicID: nil,
             matched: true,
             error: nil
         )

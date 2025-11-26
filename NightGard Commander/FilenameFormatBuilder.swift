@@ -98,6 +98,12 @@ struct FilenameFormatBuilder: View {
                                         if let index = blocks.firstIndex(where: { $0.id == block.id }) {
                                             blocks[index].field = newField
                                         }
+                                    },
+                                    onRemove: {
+                                        blocks.removeAll { $0.id == block.id }
+                                        if selectedBlockID == block.id {
+                                            selectedBlockID = nil
+                                        }
                                     }
                                 )
                                 .onDrag {
@@ -234,49 +240,63 @@ struct BlockView: View {
     let isSelected: Bool
     let onSelect: () -> Void
     let onFieldChange: (MetadataField) -> Void
+    let onRemove: () -> Void
 
     @State private var selectedField: MetadataField
 
-    init(block: FormatBlock, isSelected: Bool, onSelect: @escaping () -> Void, onFieldChange: @escaping (MetadataField) -> Void) {
+    init(block: FormatBlock, isSelected: Bool, onSelect: @escaping () -> Void, onFieldChange: @escaping (MetadataField) -> Void, onRemove: @escaping () -> Void) {
         self.block = block
         self.isSelected = isSelected
         self.onSelect = onSelect
         self.onFieldChange = onFieldChange
+        self.onRemove = onRemove
         _selectedField = State(initialValue: block.field)
     }
 
     var body: some View {
-        VStack(spacing: 4) {
-            Picker("", selection: $selectedField) {
-                ForEach(MetadataField.allCases) { field in
-                    Text(field.displayName).tag(field)
+        ZStack(alignment: .topTrailing) {
+            VStack(spacing: 4) {
+                Picker("", selection: $selectedField) {
+                    ForEach(MetadataField.allCases) { field in
+                        Text(field.displayName).tag(field)
+                    }
                 }
-            }
-            .pickerStyle(.menu)
-            .labelsHidden()
-            .frame(width: 100)
-            .onChange(of: selectedField) { oldValue, newValue in
-                onFieldChange(newValue)
-            }
+                .pickerStyle(.menu)
+                .labelsHidden()
+                .frame(width: 100)
+                .onChange(of: selectedField) { oldValue, newValue in
+                    onSelect() // Select when picker changes
+                    onFieldChange(newValue)
+                }
 
-            // Selection indicator
-            Rectangle()
-                .fill(isSelected ? Color.blue : Color.clear)
-                .frame(height: 3)
-        }
-        .padding(8)
-        .frame(width: 120)
-        .background(
-            RoundedRectangle(cornerRadius: 6)
-                .fill(isSelected ? Color.blue.opacity(0.2) : Color.secondary.opacity(0.05))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 6)
-                .stroke(isSelected ? Color.blue : Color.clear, lineWidth: 2)
-        )
-        .contentShape(RoundedRectangle(cornerRadius: 6))
-        .onTapGesture {
-            onSelect()
+                // Selection indicator
+                Rectangle()
+                    .fill(isSelected ? Color.blue : Color.clear)
+                    .frame(height: 3)
+            }
+            .padding(8)
+            .frame(width: 120)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(isSelected ? Color.blue.opacity(0.2) : Color.secondary.opacity(0.05))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(isSelected ? Color.blue : Color.clear, lineWidth: 2)
+            )
+            .simultaneousGesture(TapGesture().onEnded {
+                onSelect()
+            })
+
+            // X button to remove
+            Button(action: onRemove) {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 16))
+                    .foregroundColor(.red)
+                    .background(Circle().fill(Color.white))
+            }
+            .buttonStyle(.plain)
+            .offset(x: 6, y: -6)
         }
     }
 }

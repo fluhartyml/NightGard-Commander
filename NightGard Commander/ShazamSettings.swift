@@ -61,6 +61,11 @@ class ShazamSettings {
         set { UserDefaults.standard.set(newValue, forKey: "shazamIsConfigured") }
     }
 
+    // Check if the filename format includes genre
+    var formatUsesGenre: Bool {
+        formatBlocks.contains { $0.field == .genres }
+    }
+
     private init() {
         // Set defaults on first launch
         if !isConfigured {

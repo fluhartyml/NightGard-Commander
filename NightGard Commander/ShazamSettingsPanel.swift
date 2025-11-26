@@ -16,6 +16,10 @@ struct ShazamSettingsPanel: View {
     @State private var queueUnmatched: Bool = true
     @State private var showFormatBuilder = false
 
+    // Reformat state
+    @State private var isReformatting = false
+    @State private var reformatResult: (renamed: Int, skipped: Int, errors: Int)?
+
     var body: some View {
         VStack(spacing: 20) {
             // Title
@@ -78,6 +82,66 @@ struct ShazamSettingsPanel: View {
                         }
                     }
                 }
+
+                Section("Database") {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Scanned Files Database")
+                            Text("\(ShazamScannedDatabase.shared.count()) files tracked")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        Spacer()
+                        Button(role: .destructive, action: {
+                            ShazamScannedDatabase.shared.clearAll()
+                            reformatResult = nil
+                        }) {
+                            Label("Reset Database", systemImage: "trash")
+                        }
+                        .disabled(ShazamScannedDatabase.shared.count() == 0)
+                    }
+
+                    // Reformat All button
+                    HStack {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Reformat Files")
+                            Text("Rename all tracked files using current format (no re-scan)")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        Spacer()
+                        Button(action: {
+                            reformatAll()
+                        }) {
+                            if isReformatting {
+                                Label("Reformatting...", systemImage: "hourglass")
+                            } else {
+                                Label("Reformat All", systemImage: "arrow.triangle.2.circlepath")
+                            }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(isReformatting || ShazamScannedDatabase.shared.count() == 0)
+                    }
+
+                    // Show result if available
+                    if let result = reformatResult {
+                        HStack(spacing: 12) {
+                            Label("\(result.renamed) renamed", systemImage: "checkmark.circle.fill")
+                                .foregroundColor(.green)
+                            Label("\(result.skipped) skipped", systemImage: "minus.circle.fill")
+                                .foregroundColor(.secondary)
+                            if result.errors > 0 {
+                                Label("\(result.errors) errors", systemImage: "exclamationmark.triangle.fill")
+                                    .foregroundColor(.red)
+                            }
+                        }
+                        .font(.caption)
+                    }
+
+                    Text("Resetting allows files to be re-scanned. Metadata is stored for reformatting without re-fingerprinting.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
             }
             .formStyle(.grouped)
 
@@ -107,7 +171,7 @@ struct ShazamSettingsPanel: View {
             }
         }
         .padding(24)
-        .frame(width: 600, height: 500)
+        .frame(width: 600, height: 580)
         .onAppear {
             loadSettings()
         }
@@ -136,6 +200,20 @@ struct ShazamSettingsPanel: View {
 
         let parts = formatBlocks.map { $0.field.sampleValue() }
         return parts.joined() + ".mp3"
+    }
+
+    private func reformatAll() {
+        guard !isReformatting else { return }
+        isReformatting = true
+        reformatResult = nil
+
+        Task {
+            let result = await ShazamService.shared.reformatAllFromDatabase()
+            await MainActor.run {
+                reformatResult = result
+                isReformatting = false
+            }
+        }
     }
 }
 

@@ -389,56 +389,89 @@ struct FileBrowserPanel: View {
                         .background(Color.secondary.opacity(0.1))
                     }
 
-                    // File list with working double-click
-                    List(selection: $selectedItems) {
-                        ForEach(displayedFiles) { item in
-                            let icon = iconForFile(item)
-                            HStack(spacing: 8) {
-                                Image(systemName: icon.name)
-                                    .foregroundColor(icon.color)
-                                    .frame(width: 20)
+                    // File list with ScrollView for full gesture control
+                    ScrollView {
+                        LazyVStack(spacing: 0) {
+                            ForEach(displayedFiles) { item in
+                                let icon = iconForFile(item)
+                                let isSelected = selectedItems.contains(item.id)
 
-                                if renamingItem?.id == item.id {
-                                    TextField("Name", text: $renameText)
-                                        .textFieldStyle(.plain)
-                                        .focused($isRenameFocused)
-                                        .onSubmit {
-                                            commitRename(item: item)
-                                        }
-                                        .onKeyPress(.escape) {
-                                            cancelRename()
-                                            return .handled
-                                        }
-                                        .onAppear {
-                                            isRenameFocused = true
-                                        }
-                                } else {
-                                    Text(item.name)
-                                        .lineLimit(1)
-                                }
+                                HStack(spacing: 8) {
+                                    Image(systemName: icon.name)
+                                        .foregroundColor(icon.color)
+                                        .frame(width: 20)
 
-                                Spacer()
-                            }
-                            .contentShape(Rectangle())
-                            .onTapGesture(count: 2) {
-                                // Double-click: play media or open folder
-                                if item.isDirectory {
-                                    fileSystem.navigateToFolder(item.path)
-                                    currentMedia = nil
-                                    showMediaPlayer = false
-                                } else if isMediaFile(item) {
-                                    shouldAutoPlay = true
-                                    onItemDoubleClick(item)
+                                    // Play button for media files
+                                    if isMediaFile(item) {
+                                        Button(action: {
+                                            shouldAutoPlay = true
+                                            onItemDoubleClick(item)
+                                        }) {
+                                            Image(systemName: "play.circle.fill")
+                                                .font(.system(size: 14))
+                                                .foregroundColor(.accentColor)
+                                        }
+                                        .buttonStyle(.borderless)
+                                    }
+
+                                    // Open button for folders
+                                    if item.isDirectory {
+                                        Button(action: {
+                                            fileSystem.navigateToFolder(item.path)
+                                            currentMedia = nil
+                                            showMediaPlayer = false
+                                        }) {
+                                            Image(systemName: "arrow.right.circle.fill")
+                                                .font(.system(size: 14))
+                                                .foregroundColor(.blue)
+                                        }
+                                        .buttonStyle(.borderless)
+                                    }
+
+                                    if renamingItem?.id == item.id {
+                                        TextField("Name", text: $renameText)
+                                            .textFieldStyle(.plain)
+                                            .focused($isRenameFocused)
+                                            .onSubmit {
+                                                commitRename(item: item)
+                                            }
+                                            .onKeyPress(.escape) {
+                                                cancelRename()
+                                                return .handled
+                                            }
+                                            .onAppear {
+                                                isRenameFocused = true
+                                            }
+                                    } else {
+                                        Text(item.name)
+                                            .lineLimit(1)
+                                    }
+
+                                    Spacer()
+                                }
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(isSelected ? Color.accentColor.opacity(0.3) : Color.clear)
+                                .contentShape(Rectangle())
+                                .onTapGesture(count: 2) {
+                                    // Double-click: play media or open folder
+                                    if item.isDirectory {
+                                        fileSystem.navigateToFolder(item.path)
+                                        currentMedia = nil
+                                        showMediaPlayer = false
+                                    } else if isMediaFile(item) {
+                                        shouldAutoPlay = true
+                                        onItemDoubleClick(item)
+                                    }
+                                }
+                                .onTapGesture(count: 1) {
+                                    // Single click: select
+                                    selectedItems = [item.id]
                                 }
                             }
-                            .onTapGesture(count: 1) {
-                                // Single click: select item
-                                selectedItems = [item.id]
-                            }
-                            .tag(item.id)
                         }
                     }
-                    .listStyle(.plain)
+                    .focusable()
                     .contextMenu {
                         if selectedItems.count > 1 {
                             Button("Open") {
@@ -596,8 +629,11 @@ struct FileBrowserPanel: View {
                             // ↑ = Previous track when playing
                             playPreviousTrack()
                             return .handled
+                        } else {
+                            // Navigate selection up
+                            navigateSelection(direction: -1)
+                            return .handled
                         }
-                        return .ignored  // Let table handle arrow navigation
                     }
                     .onKeyPress(.downArrow) {
                         if nuclearModeEnabled {
@@ -608,8 +644,11 @@ struct FileBrowserPanel: View {
                             // ↓ = Next track when playing
                             advanceToNextTrack()
                             return .handled
+                        } else {
+                            // Navigate selection down
+                            navigateSelection(direction: 1)
+                            return .handled
                         }
-                        return .ignored  // Let table handle arrow navigation
                     }
                     .onKeyPress(.space) {
                         // Space = Play/Pause
@@ -1115,7 +1154,12 @@ struct FileBrowserPanel: View {
 
         // Check if file exists at destination
         if fileManager.fileExists(atPath: destURL.path) {
-            // Show alert asking user what to do
+            // Nuclear mode: auto-replace without asking
+            if nuclearModeEnabled {
+                executeMoveToOtherPane(item: item, replace: true)
+                return
+            }
+            // Normal mode: Show alert asking user what to do
             pendingMoveItem = item
             showDuplicateAlert = true
             return
@@ -1247,6 +1291,26 @@ struct FileBrowserPanel: View {
             self.lastSelectedItem = track
             self.onItemSelect(track)
             self.onItemDoubleClick(track)
+        }
+    }
+
+    // Navigate selection up or down in the file list
+    private func navigateSelection(direction: Int) {
+        let files = displayedFiles
+        guard !files.isEmpty else { return }
+
+        if let currentID = selectedItems.first,
+           let currentIndex = files.firstIndex(where: { $0.id == currentID }) {
+            let newIndex = max(0, min(files.count - 1, currentIndex + direction))
+            selectedItems = [files[newIndex].id]
+            lastSelectedItem = files[newIndex]
+            onItemSelect(files[newIndex])
+        } else {
+            // Nothing selected, select first or last based on direction
+            let item = direction > 0 ? files.first! : files.last!
+            selectedItems = [item.id]
+            lastSelectedItem = item
+            onItemSelect(item)
         }
     }
 
