@@ -240,6 +240,9 @@ struct InPaneMediaPlayer: View {
                             AirPlayPicker(player: player)
                                 .frame(width: 20, height: 20)
                         }
+
+                        // Fullscreen visualizer for TV/AirPlay display
+                        FullscreenVisualizerButton()
                     }
                     .padding(.vertical, 4)
                 }
@@ -365,6 +368,16 @@ struct InPaneMediaPlayer: View {
                     await MainActor.run {
                         self.duration = CMTimeGetSeconds(loadedDuration)
                         self.albumArt = artwork
+
+                        // Update fullscreen visualizer with track info
+                        if let media = currentMedia {
+                            let trackName = (media.name as NSString).deletingPathExtension
+                            FullscreenVisualizerWindowManager.shared.updateTrackInfo(
+                                name: trackName,
+                                artist: ""
+                            )
+                        }
+
                         if shouldAutoPlay {
                             player?.play()
                             isCurrentlyPlaying = true
@@ -510,6 +523,14 @@ struct InPaneMediaPlayer: View {
 
     private func updatePlaybackTime() {
         guard let player = player else { return }
+
+        // Update fullscreen visualizer with current data
+        if isCurrentlyPlaying {
+            FullscreenVisualizerWindowManager.shared.updateVisualization(
+                frequency: audioAnalyzer.frequencyData,
+                amp: audioAnalyzer.amplitude
+            )
+        }
 
         if let currentItem = player.currentItem {
             currentTime = CMTimeGetSeconds(currentItem.currentTime())
