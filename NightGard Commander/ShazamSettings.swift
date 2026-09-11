@@ -55,6 +55,29 @@ class ShazamSettings {
         set { UserDefaults.standard.set(newValue, forKey: "shazamQueueUnmatched") }
     }
 
+    // The target music library parent directory.
+    //
+    // Designated by right-clicking a folder in either pane. Consolidation and
+    // normalization write here, so it is remembered between launches rather than
+    // being re-picked every session. Stored as a plain path: this app is not
+    // sandboxed, so no security-scoped bookmark is needed to reopen it.
+    // Empty string means nothing has been designated yet.
+    var musicLibraryPath: String {
+        get { UserDefaults.standard.string(forKey: "musicLibraryTargetPath") ?? "" }
+        set { UserDefaults.standard.set(newValue, forKey: "musicLibraryTargetPath") }
+    }
+
+    /// True when a target music library has been designated and still exists on disk.
+    /// The folder can be on a drive that is currently unmounted, so this is checked
+    /// at the point of use rather than cached.
+    var musicLibraryIsAvailable: Bool {
+        let p = musicLibraryPath
+        guard !p.isEmpty else { return false }
+        var isDir: ObjCBool = false
+        let exists = FileManager.default.fileExists(atPath: p, isDirectory: &isDir)
+        return exists && isDir.boolValue
+    }
+
     // Check if user has configured settings (completed first-run setup)
     var isConfigured: Bool {
         get { UserDefaults.standard.bool(forKey: "shazamIsConfigured") }

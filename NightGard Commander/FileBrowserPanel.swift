@@ -6,6 +6,35 @@
 //
 
 import SwiftUI
+import AppKit
+
+// Track modifier keys at mouseDown time (before SwiftUI gesture fires)
+// NOTE: Shift+click is unreliable due to SwiftUI gesture timing - Command+click works
+class ModifierKeyTracker {
+    static let shared = ModifierKeyTracker()
+    private var shiftAtLastClick = false
+    private var commandAtLastClick = false
+    private var monitor: Any?
+
+    private init() {
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { [weak self] event in
+            let flags = event.modifierFlags
+            self?.shiftAtLastClick = flags.contains(.shift)
+            self?.commandAtLastClick = flags.contains(.command)
+            return event
+        }
+    }
+
+    deinit {
+        if let monitor = monitor {
+            NSEvent.removeMonitor(monitor)
+        }
+    }
+
+    func checkModifiers() -> (command: Bool, shift: Bool) {
+        return (command: commandAtLastClick, shift: shiftAtLastClick)
+    }
+}
 
 struct FileBrowserPanel: View {
     @Bindable var fileSystem: FileSystemService
@@ -37,6 +66,9 @@ struct FileBrowserPanel: View {
     @State private var showAddServerSheet = false
     @State private var mountingServer: ServerConfig?
     @State private var folderToScan: FileItem?
+    // Mirrors ShazamSettings.musicLibraryPath so the context menu and the pane
+    // header redraw the moment a folder is designated or cleared.
+    @State private var musicLibraryTarget: String = ShazamSettings.shared.musicLibraryPath
     @State private var showMultiFolderScan = false
     @State private var selectedFoldersForScan: [FileItem] = []
     @State private var showPlaylistsOnly = false
@@ -474,8 +506,25 @@ struct FileBrowserPanel: View {
                                     }
                                 }
                                 .onTapGesture(count: 1) {
-                                    // Single click: select
-                                    selectedItems = [item.id]
+                                    // Single click: select with modifier key support
+                                    let modifiers = ModifierKeyTracker.shared.checkModifiers()
+
+                                    if modifiers.command {
+                                        // Command+click: toggle selection
+                                        if selectedItems.contains(item.id) {
+                                            selectedItems.remove(item.id)
+                                        } else {
+                                            selectedItems.insert(item.id)
+                                        }
+                                        lastSelectedItem = item
+                                    } else if modifiers.shift {
+                                        // Shift+click: range selection
+                                        selectRange(to: item)
+                                    } else {
+                                        // Plain click: single selection
+                                        selectedItems = [item.id]
+                                        lastSelectedItem = item
+                                    }
                                 }
                             }
                         }
@@ -538,6 +587,25 @@ struct FileBrowserPanel: View {
                                 Button("Scan for Media...") {
                                     folderToScan = item
                                 }
+
+                                // Designate this folder as the target music library
+                                // parent directory. Saved in Settings, so it survives
+                                // a relaunch and does not have to be re-picked.
+                                // Standardised on both sides so the interface and the
+                                // --set-music-library verb compare equal. This check is
+                                // a plain string comparison.
+                                let itemPath = URL(fileURLWithPath: item.path).standardizedFileURL.path
+                                if ShazamSettings.shared.musicLibraryPath == itemPath {
+                                    Button("Clear Target Music Library") {
+                                        ShazamSettings.shared.musicLibraryPath = ""
+                                        musicLibraryTarget = ""
+                                    }
+                                } else {
+                                    Button("Designate as Target Music Library") {
+                                        ShazamSettings.shared.musicLibraryPath = itemPath
+                                        musicLibraryTarget = itemPath
+                                    }
+                                }
                             }
 
                             if isMediaFile(item), let addAction = onAddToPlaylist {
@@ -573,7 +641,8 @@ struct FileBrowserPanel: View {
                     .onChange(of: selectedItems) { oldValue, newValue in
                         if let firstID = newValue.first,
                            let item = fileSystem.files.first(where: { $0.id == firstID }) {
-                            lastSelectedItem = item
+                            // Don't update lastSelectedItem here - it's set in tap gesture
+                            // and changing it here breaks Shift+click range selection
                             onFocus()
                             onItemSelect(item)
                         }
@@ -1321,17 +1390,20 @@ struct FileBrowserPanel: View {
     }
 
     private func selectRange(to item: FileItem) {
+        let files = displayedFiles
+
         guard let lastItem = lastSelectedItem,
-              let startIndex = fileSystem.files.firstIndex(where: { $0.id == lastItem.id }),
-              let endIndex = fileSystem.files.firstIndex(where: { $0.id == item.id }) else {
+              let startIndex = files.firstIndex(where: { $0.id == lastItem.id }),
+              let endIndex = files.firstIndex(where: { $0.id == item.id }) else {
+            // No anchor or anchor not found - single select
             selectedItems = [item.id]
             lastSelectedItem = item
             return
         }
 
         let range = startIndex < endIndex ? startIndex...endIndex : endIndex...startIndex
-        selectedItems = Set(fileSystem.files[range].map { $0.id })
-        lastSelectedItem = item
+        selectedItems = Set(files[range].map { $0.id })
+        // Don't update lastSelectedItem - keep the anchor for continued shift-clicks
     }
 
     private func deleteItem(item: FileItem) {

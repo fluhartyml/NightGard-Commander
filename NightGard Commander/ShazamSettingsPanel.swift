@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import AppKit
 
 struct ShazamSettingsPanel: View {
     @Binding var isPresented: Bool
@@ -14,6 +15,7 @@ struct ShazamSettingsPanel: View {
     @State private var formatBlocks: [FormatBlock] = []
     @State private var autoRename: Bool = true
     @State private var queueUnmatched: Bool = true
+    @State private var musicLibraryPath: String = ""
     @State private var showFormatBuilder = false
 
     // Reformat state
@@ -64,6 +66,55 @@ struct ShazamSettingsPanel: View {
                             Label("Change Format", systemImage: "slider.horizontal.3")
                         }
                         .buttonStyle(.bordered)
+                    }
+                }
+
+                Section("Music Library") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("The target music library parent directory. Consolidated and normalized files are written here.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+
+                        Text(musicLibraryPath.isEmpty
+                             ? "No target designated"
+                             : musicLibraryPath)
+                            .font(.system(.body, design: .monospaced))
+                            .foregroundColor(musicLibraryPath.isEmpty ? .orange : .primary)
+                            .padding(8)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Color.secondary.opacity(0.1))
+                            .cornerRadius(6)
+                            .textSelection(.enabled)
+
+                        // A designated folder can sit on a drive that is not mounted
+                        // right now. Say so rather than letting a write fail later.
+                        if !musicLibraryPath.isEmpty && !folderExists(musicLibraryPath) {
+                            Label("That folder is not reachable right now. Its drive may be unmounted.",
+                                  systemImage: "exclamationmark.triangle.fill")
+                                .font(.caption)
+                                .foregroundColor(.orange)
+                        }
+
+                        HStack {
+                            Button(action: {
+                                chooseMusicLibrary()
+                            }) {
+                                Label("Choose Folder", systemImage: "folder")
+                            }
+                            .buttonStyle(.bordered)
+
+                            Button(role: .destructive, action: {
+                                musicLibraryPath = ""
+                            }) {
+                                Label("Clear", systemImage: "xmark.circle")
+                            }
+                            .buttonStyle(.bordered)
+                            .disabled(musicLibraryPath.isEmpty)
+                        }
+
+                        Text("You can also right-click any folder in either pane and choose Designate as Target Music Library.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
                     }
                 }
 
@@ -215,7 +266,9 @@ struct ShazamSettingsPanel: View {
             }
         }
         .padding(24)
-        .frame(width: 600, height: 580)
+        // Taller than 580 because the Music Library section was added below the
+        // format section; at the old height its buttons fell outside the window.
+        .frame(width: 600, height: 720)
         .onAppear {
             loadSettings()
         }
@@ -228,13 +281,39 @@ struct ShazamSettingsPanel: View {
         formatBlocks = settings.formatBlocks
         autoRename = settings.autoRename
         queueUnmatched = settings.queueUnmatched
+        musicLibraryPath = settings.musicLibraryPath
     }
 
     private func saveSettings() {
         settings.formatBlocks = formatBlocks
         settings.autoRename = autoRename
         settings.queueUnmatched = queueUnmatched
+        settings.musicLibraryPath = musicLibraryPath
         settings.isConfigured = true
+    }
+
+    private func folderExists(_ path: String) -> Bool {
+        var isDir: ObjCBool = false
+        let exists = FileManager.default.fileExists(atPath: path, isDirectory: &isDir)
+        return exists && isDir.boolValue
+    }
+
+    private func chooseMusicLibrary() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.canCreateDirectories = true
+        panel.prompt = "Designate"
+        panel.message = "Select the target music library parent directory"
+
+        if !musicLibraryPath.isEmpty, folderExists(musicLibraryPath) {
+            panel.directoryURL = URL(fileURLWithPath: musicLibraryPath)
+        }
+
+        if panel.runModal() == .OK, let url = panel.url {
+            musicLibraryPath = url.path
+        }
     }
 
     private func generatePreview() -> String {
