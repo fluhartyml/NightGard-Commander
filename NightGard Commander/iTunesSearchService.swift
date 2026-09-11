@@ -328,7 +328,7 @@ class iTunesSearchService {
                 if FileManager.default.fileExists(atPath: newURL.path) {
                     // Keep the higher-quality file, not simply the incoming one.
                     // His rule, 2026-09-10: "keep the higher definition of the two."
-                    if !AudioQuality.resolveCollision(incoming: fileURL, existing: newURL) {
+                    if !(await AudioQuality.resolveCollision(incoming: fileURL, existing: newURL)) {
                         print("🗑️ [ITUNES] Kept existing higher-quality: \(newName)")
                         return
                     }
@@ -408,7 +408,7 @@ class iTunesSearchService {
                 if FileManager.default.fileExists(atPath: newURL.path) {
                     // Keep the higher-quality file, not simply the incoming one.
                     // His rule, 2026-09-10: "keep the higher definition of the two."
-                    if !AudioQuality.resolveCollision(incoming: fileURL, existing: newURL) {
+                    if !(await AudioQuality.resolveCollision(incoming: fileURL, existing: newURL)) {
                         print("🗑️ [ITUNES] Kept existing higher-quality: \(newName)")
                         return
                     }
