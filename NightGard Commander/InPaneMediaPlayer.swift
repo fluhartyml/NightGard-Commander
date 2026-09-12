@@ -42,6 +42,18 @@ struct InPaneMediaPlayer: View {
     private let crossfadeDuration: Double = 5.0  // seconds
 
     private let timer = Timer.publish(every: 0.1, on: .main, in: .common).autoconnect()
+    /// True from the moment a track is judged finished until the next one starts.
+    /// The notification and the timer backstop can both fire for the same track, a
+    /// few milliseconds apart, and without this the player advances twice and a
+    /// file is silently skipped.
+    @State private var isFinishingTrack = false
+
+    /// Token for the end-of-playback notification on the CURRENT item. Replaced
+    /// whenever the item is, so a finished track cannot advance twice.
+    @State private var endOfTrackObserver: NSObjectProtocol?
+
+    /// Same, for a file the player cannot decode at all.
+    @State private var failedToPlayObserver: NSObjectProtocol?
 
     var mediaFiles: [FileItem] {
         fileSystem.files.filter { file in
@@ -390,6 +402,38 @@ struct InPaneMediaPlayer: View {
                 player = AVPlayer(playerItem: playerItem)
             }
 
+            // ⛔ THE END OF A TRACK IS ANNOUNCED BY THE SYSTEM. DO NOT INFER IT.
+            // Auto-advance used to depend on a timer noticing that currentTime had
+            // reached duration. When duration comes back as zero or not-a-number —
+            // which it does for files AVFoundation cannot decode, and did for the
+            // 8 kHz ADPCM wavs on 2026-09-11 — that comparison is never true and
+            // nothing ever advances, however the Next toggle is set.
+            //
+            // AVFoundation posts this when the item genuinely finishes. It needs no
+            // duration, so a track that plays at all can always hand over to the next.
+            endOfTrackObserver.map(NotificationCenter.default.removeObserver)
+            endOfTrackObserver = NotificationCenter.default.addObserver(
+                forName: AVPlayerItem.didPlayToEndTimeNotification,
+                object: playerItem,
+                queue: .main
+            ) { _ in
+                handleTrackFinished()
+            }
+
+            // A file that cannot be played is treated exactly like one that ended.
+            // His rule: "if it reaches the end or an invalid file it switches to the
+            // other pane." Without this an undecodable file stops the run dead, which
+            // is what the 8 kHz ADPCM wavs did.
+            failedToPlayObserver.map(NotificationCenter.default.removeObserver)
+            failedToPlayObserver = NotificationCenter.default.addObserver(
+                forName: AVPlayerItem.failedToPlayToEndTimeNotification,
+                object: playerItem,
+                queue: .main
+            ) { _ in
+                print("⚠️ [PLAYER] Could not play \(media.name) — treating as finished")
+                handleTrackFinished()
+            }
+
             // Reset state
             currentTime = 0
             albumArt = nil
@@ -612,12 +656,13 @@ struct InPaneMediaPlayer: View {
             // Crossfade logic - start fading when within crossfade duration
             if crossfadeEnabled && !isCrossfading && timeRemaining <= crossfadeDuration && timeRemaining > 0.1 {
                 // Crossfade to next track in same pane
-                if autoPlayNext && currentTrackIndex < mediaFiles.count - 1 {
-                    startCrossfade(toOpposite: false)
-                }
-                // Crossfade to opposite pane
-                else if autoPlayOpposite, let getURL = getOppositeFirstMediaURL, getURL() != nil {
+                // Switch outranks Next here too, so the seam matches what actually
+                // happens next.
+                if autoPlayOpposite, let getURL = getOppositeFirstMediaURL, getURL() != nil {
                     startCrossfade(toOpposite: true)
+                }
+                else if autoPlayNext && currentTrackIndex < mediaFiles.count - 1 {
+                    startCrossfade(toOpposite: false)
                 }
             }
 
@@ -628,36 +673,71 @@ struct InPaneMediaPlayer: View {
                 crossfadePlayer?.volume = Float(fadeProgress)
             }
 
-            // Handle end of media
-            if currentTime >= duration - 0.1 && isCurrentlyPlaying {
-                // If crossfading, complete the transition
+            // Handle end of media.
+            // Kept as a backstop only. The authority is the system notification set
+            // up in setupPlayer; this still catches the crossfade completion, which
+            // finishes early by design and so never posts one.
+            if duration > 0 && currentTime >= duration - 0.1 && isCurrentlyPlaying {
                 if isCrossfading {
                     completeCrossfade()
                     return
                 }
-
-                player.pause()
-                isCurrentlyPlaying = false
-
-                // Check auto-play logic
-                if autoPlayNext && currentTrackIndex < mediaFiles.count - 1 {
-                    // Play next in same pane
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                        playNext()
-                    }
-                } else if autoPlayOpposite {
-                    // Switch to opposite pane
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                        stopPlayback()
-                        isVisible = false
-                        onSwitchToOpposite()
-                    }
-                } else {
-                    // Stop and reset
-                    player.seek(to: .zero)
-                    currentTime = 0
-                }
+                handleTrackFinished()
             }
+        }
+    }
+
+    /// What happens when a track finishes, whatever noticed it.
+    ///
+    /// ⚠️ SWITCH OUTRANKS NEXT. His rule, 2026-09-11: "if next is toggled and switch
+    /// is toggled switch wins." It used to be the other way round, which made Switch
+    /// mean "at the end of the pane" instead of "at the end of the track".
+    private func handleTrackFinished() {
+        guard let player = player else { return }
+        guard !isFinishingTrack else { return }
+        isFinishingTrack = true
+
+        if isCrossfading {
+            isFinishingTrack = false
+            completeCrossfade()
+            return
+        }
+
+        player.pause()
+        isCurrentlyPlaying = false
+
+        // ⛔ SWITCHING STOPS WHEN THERE IS NOWHERE TO SWITCH TO.
+        // His rule, 2026-09-11: Switch alternates between the panes, and "if it
+        // switches to no valid media file it stops so it doesnt loop." Two panes
+        // that each hand back to the other would otherwise bounce forever, and a
+        // pane with nothing playable is exactly when that happens.
+        if autoPlayOpposite {
+            let oppositeHasMedia = getOppositeFirstMediaURL?() != nil
+            guard oppositeHasMedia else {
+                player.seek(to: .zero)
+                currentTime = 0
+                isFinishingTrack = false
+                print("⏹️ [SWITCH] Other pane has no playable media — stopping rather than looping")
+                return
+            }
+            // Switch to the other pane.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                isFinishingTrack = false
+                stopPlayback()
+                isVisible = false
+                onSwitchToOpposite()
+            }
+        } else if autoPlayNext && currentTrackIndex < mediaFiles.count - 1 {
+            // Play the next file in this pane.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                isFinishingTrack = false
+                playNext()
+            }
+        } else {
+            // Stop and reset.
+            player.seek(to: .zero)
+            currentTime = 0
+            isFinishingTrack = false
         }
     }
 
