@@ -62,9 +62,14 @@ class ShazamSettings {
     // being re-picked every session. Stored as a plain path: this app is not
     // sandboxed, so no security-scoped bookmark is needed to reopen it.
     // Empty string means nothing has been designated yet.
-    var musicLibraryPath: String {
-        get { UserDefaults.standard.string(forKey: "musicLibraryTargetPath") ?? "" }
-        set { UserDefaults.standard.set(newValue, forKey: "musicLibraryTargetPath") }
+    /// ⚠️ STORED, not computed over UserDefaults. @Observable only tracks stored
+    /// properties, and the badge in the file list has to redraw the moment either
+    /// pane, Settings, or the CLI changes this. A computed accessor reads correctly
+    /// and notifies nobody, which is the same as not updating at all.
+    var musicLibraryPath: String = UserDefaults.standard.string(forKey: "musicLibraryTargetPath") ?? "" {
+        didSet {
+            UserDefaults.standard.set(musicLibraryPath, forKey: "musicLibraryTargetPath")
+        }
     }
 
     /// True when a target music library has been designated and still exists on disk.

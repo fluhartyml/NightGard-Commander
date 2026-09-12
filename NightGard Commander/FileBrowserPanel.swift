@@ -62,13 +62,16 @@ struct FileBrowserPanel: View {
     @State private var isCreatingNewFile = false
     @State private var newItemName = "untitled"
     @State private var renamingItem: FileItem?
+    /// Swallows the single Return that commits a rename, so it cannot also open
+    /// the folder it just renamed. Cleared the moment it is used.
+    @State private var suppressNextReturn = false
     @State private var renameText = ""
     @State private var showAddServerSheet = false
     @State private var mountingServer: ServerConfig?
     @State private var folderToScan: FileItem?
-    // Mirrors ShazamSettings.musicLibraryPath so the context menu and the pane
-    // header redraw the moment a folder is designated or cleared.
-    @State private var musicLibraryTarget: String = ShazamSettings.shared.musicLibraryPath
+    // Observed, not copied. The badge on the designated folder has to follow a
+    // change made in the other pane, in Settings, or from the command line.
+    @State private var musicSettings = ShazamSettings.shared
     @State private var showMultiFolderScan = false
     @State private var selectedFoldersForScan: [FileItem] = []
     @State private var showPlaylistsOnly = false
@@ -306,21 +309,6 @@ struct FileBrowserPanel: View {
                 }
                 .help("Click to iTunes lookup selected file | Right-click for folder scan")
 
-                if fileSystem.canNavigateUp() {
-                    Button(action: {
-                        fileSystem.navigateUp()
-                        currentMedia = nil
-                        showMediaPlayer = false
-                    }) {
-                        HStack(spacing: 4) {
-                            Image(systemName: "arrow.up.circle.fill")
-                            Text("..")
-                                .font(.system(.body, design: .monospaced))
-                        }
-                    }
-                    .buttonStyle(.bordered)
-                    .help("Go up one folder")
-                }
 
                 TickerText(text: fileSystem.currentPath)
                     .font(.system(.caption, design: .monospaced))
@@ -346,7 +334,10 @@ struct FileBrowserPanel: View {
                             .opacity(nuclearModeEnabled ? 1.0 : 0.3)
                     }
                     .buttonStyle(.borderless)
-                    .help(nuclearModeEnabled ? "Nuclear Mode: ON (← copy, → move, ↑ prev, ↓ next)" : "Nuclear Mode: OFF (tap to enable)")
+                    // ← is UNDO, not copy. The old text said copy and the code has
+                    // always called undoLastMove; a tooltip that names the wrong key
+                    // is worse than none on a mode that moves files.
+                    .help(nuclearModeEnabled ? "Nuclear Mode: ON (→ move + play next, ↓ next, ↑ prev, ← undo last move)" : "Nuclear Mode: OFF (tap to enable)")
 
                     // North - Up arrow (previous)
                     Text("↑")
@@ -374,6 +365,25 @@ struct FileBrowserPanel: View {
                 }
                 .frame(width: 40, height: 40)
                 .padding(.trailing, 8)
+
+                // Up one folder sits immediately right of Nuclear Mode.
+                // His placement, 2026-09-11. It was previously in the middle of
+                // the row between the music actions and the path.
+                if fileSystem.canNavigateUp() {
+                    Button(action: {
+                        fileSystem.navigateUp()
+                        currentMedia = nil
+                        showMediaPlayer = false
+                    }) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "arrow.up.circle.fill")
+                            Text("..")
+                                .font(.system(.body, design: .monospaced))
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .help("Go up one folder")
+                }
             }
             .frame(height: 32)
             .background(Color.secondary.opacity(0.1))
@@ -488,6 +498,21 @@ struct FileBrowserPanel: View {
                                             .lineLimit(1)
                                     }
 
+                                    // The designated target music library is marked in
+                                    // the list itself, not only in the right-click menu.
+                                    // His rule, 2026-09-11: it "should be highlighted or
+                                    // have a persistant badge or check showing unless
+                                    // cleared." A designation you have to right-click to
+                                    // see is one you cannot confirm at a glance.
+                                    if item.isDirectory,
+                                       !musicSettings.musicLibraryPath.isEmpty,
+                                       URL(fileURLWithPath: item.path).standardizedFileURL.path == musicSettings.musicLibraryPath {
+                                        Image(systemName: "checkmark.seal.fill")
+                                            .font(.system(size: 12))
+                                            .foregroundColor(.green)
+                                            .help("Target Music Library")
+                                    }
+
                                     Spacer()
                                 }
                                 .padding(.horizontal, 8)
@@ -598,12 +623,10 @@ struct FileBrowserPanel: View {
                                 if ShazamSettings.shared.musicLibraryPath == itemPath {
                                     Button("Clear Target Music Library") {
                                         ShazamSettings.shared.musicLibraryPath = ""
-                                        musicLibraryTarget = ""
                                     }
                                 } else {
                                     Button("Designate as Target Music Library") {
                                         ShazamSettings.shared.musicLibraryPath = itemPath
-                                        musicLibraryTarget = itemPath
                                     }
                                 }
                             }
@@ -658,6 +681,23 @@ struct FileBrowserPanel: View {
                     }
                     // DJ CURATION KEYBOARD SHORTCUTS
                     .onKeyPress(.return) {
+                        // ⛔ A RENAME IN PROGRESS OWNS THE RETURN KEY.
+                        // His report, 2026-09-11: renaming Music to Media and pressing
+                        // Return opened the folder instead of renaming it. Both handlers
+                        // fired, the navigation won, and the rename was lost.
+                        // Return commits the rename and nothing else; opening takes a
+                        // second, separate press.
+                        if renamingItem != nil { return .ignored }
+
+                        // The rename may have just cleared renamingItem in the same
+                        // keystroke, so the check above cannot be the only guard —
+                        // the order the two handlers run in is not defined. This
+                        // swallows exactly one Return after a successful rename.
+                        if suppressNextReturn {
+                            suppressNextReturn = false
+                            return .handled
+                        }
+
                         // Enter/Return = Open folder or play media
                         if let firstID = selectedItems.first,
                            let item = fileSystem.files.first(where: { $0.id == firstID }) {
@@ -1378,6 +1418,7 @@ struct FileBrowserPanel: View {
             let newURL = oldURL.deletingLastPathComponent().appendingPathComponent(renameText)
             try FileManager.default.moveItem(at: oldURL, to: newURL)
             fileSystem.loadFiles()
+            suppressNextReturn = true
             cancelRename()
         } catch {
             print("Error renaming item: \(error)")
