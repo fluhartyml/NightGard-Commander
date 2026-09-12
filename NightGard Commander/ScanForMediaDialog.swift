@@ -46,6 +46,20 @@ struct ScanForMediaDialog: View {
     @State private var showErrorAlert = false
     @State private var destinationPath: String
 
+    /// The media library designated in Settings, offered as a one-click destination.
+    /// Read live rather than captured at init, so designating one while this dialog
+    /// is open still offers it.
+    private var mediaLibraryPath: String { ShazamSettings.shared.musicLibraryPath }
+
+    /// The designated folder can sit on a drive that is not mounted. Offering it as a
+    /// destination in that state would fail at Execute, after the scan.
+    private var mediaLibraryIsReachable: Bool {
+        var isDir: ObjCBool = false
+        let p = mediaLibraryPath
+        guard !p.isEmpty else { return false }
+        return FileManager.default.fileExists(atPath: p, isDirectory: &isDir) && isDir.boolValue
+    }
+
     enum ScanPhase {
         case scanning
         case review
@@ -57,12 +71,26 @@ struct ScanForMediaDialog: View {
         case addToPlaylist = "Add to Playlist"
         case copyToOtherPane = "Copy to Other Pane"
         case moveToOtherPane = "Move to Other Pane"
+        // His wording, 2026-09-11. The designated folder is named in the action
+        // itself so it does not hide behind a destination row he never reached.
+        case copyToMediaLibrary = "Copy to Designated Media Folder"
+        case moveToMediaLibrary = "Move to Designated Media Folder"
+
+        /// True for the two actions that write to the folder designated in Settings.
+        var usesMediaLibrary: Bool {
+            self == .copyToMediaLibrary || self == .moveToMediaLibrary
+        }
+
+        /// True for every action that writes files anywhere.
+        var writesFiles: Bool { self != .addToPlaylist }
     }
 
     enum Organization: String, CaseIterable {
         case flatten = "Flatten (all in one folder)"
         case byExtension = "Folders by Extension (MP3/, M4A/, MP4/...)"
         case byMediaType = "Folders by Media Type (Audio/, Video/)"
+        // His ask, 2026-09-11: media type first, then extension inside it.
+        case byMediaTypeThenExtension = "Folders by Media Type then Extension (Audio/MP3/, Video/MP4/...)"
     }
 
     var body: some View {
@@ -97,7 +125,12 @@ struct ScanForMediaDialog: View {
                         executeOperation()
                     }
                     .keyboardShortcut(.defaultAction)
-                    .disabled(scanner.foundFiles.isEmpty)
+                    // Cannot execute a designated-folder action with nothing
+                    // designated, or with its drive unmounted. Refusing here beats
+                    // failing after the scan.
+                    .disabled(scanner.foundFiles.isEmpty
+                              || (selectedAction.usesMediaLibrary && !mediaLibraryIsReachable))
+                    .help(actionHelpText)
                 } else if phase == .executing {
                     Button("Cancel") {
                         scanner.cancel()
@@ -252,7 +285,14 @@ struct ScanForMediaDialog: View {
                         Text(action.rawValue).tag(action)
                     }
                 }
-                .pickerStyle(.segmented)
+                // Stacked, not segmented. His call, 2026-09-11: five labels this long
+                // overflowed a 600-point window and clipped the first and last option
+                // off both edges.
+                .pickerStyle(.radioGroup)
+                .labelsHidden()
+                // His ask, 2026-09-11: the "select designated folder in settings"
+                // prompt belongs in the hover text, not as another line on screen.
+                .help(actionHelpText)
             }
 
             // Organization selection (only for copy/move)
@@ -270,7 +310,11 @@ struct ScanForMediaDialog: View {
                     .pickerStyle(.radioGroup)
                 }
 
-                // Destination folder picker
+                // Destination folder picker.
+                // Hidden for the two designated-folder actions: those name their
+                // destination in the action itself, so offering a second, editable
+                // destination beside them would be two answers to one question.
+                if !selectedAction.usesMediaLibrary {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Destination:")
                         .font(.subheadline)
@@ -285,6 +329,20 @@ struct ScanForMediaDialog: View {
 
                         Spacer()
 
+                        // Third destination: the media library designated in Settings.
+                        // His ask, 2026-09-11 — the whole point of designating it is
+                        // not having to go and find it again in a file picker.
+                        if !mediaLibraryPath.isEmpty {
+                            Button("Media Library") {
+                                destinationPath = mediaLibraryPath
+                            }
+                            .buttonStyle(.bordered)
+                            .disabled(destinationPath == mediaLibraryPath || !mediaLibraryIsReachable)
+                            .help(mediaLibraryIsReachable
+                                  ? "Send to the designated media library: \(mediaLibraryPath)"
+                                  : "Designated media library is not reachable right now: \(mediaLibraryPath)")
+                        }
+
                         Button("Choose Folder...") {
                             chooseDestinationFolder()
                         }
@@ -294,8 +352,43 @@ struct ScanForMediaDialog: View {
                     .background(Color.gray.opacity(0.1))
                     .cornerRadius(6)
                 }
+                } else {
+                    // Show what the designated action will actually write to, or say
+                    // plainly that nothing is designated yet.
+                    HStack(spacing: 6) {
+                        Image(systemName: mediaLibraryIsReachable ? "checkmark.seal.fill" : "exclamationmark.triangle.fill")
+                            .foregroundColor(mediaLibraryIsReachable ? .green : .orange)
+                        Text(mediaLibraryPath.isEmpty
+                             ? "No designated media folder. Choose one in Settings, or right-click a folder."
+                             : mediaLibraryPath)
+                            .font(.caption)
+                            .foregroundColor(mediaLibraryIsReachable ? .secondary : .orange)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Spacer()
+                    }
+                    .padding(8)
+                    .background(Color.gray.opacity(0.1))
+                    .cornerRadius(6)
+                    .help(actionHelpText)
+                }
             }
         }
+    }
+
+    /// Hover text for the action picker. Names the designated folder when there is
+    /// one, and tells him where to set it when there is not.
+    private var actionHelpText: String {
+        guard selectedAction.usesMediaLibrary else {
+            return "Add to Playlist, or copy/move to the other pane"
+        }
+        if mediaLibraryPath.isEmpty {
+            return "Select designated folder in Settings"
+        }
+        if !mediaLibraryIsReachable {
+            return "Designated folder is not reachable right now: \(mediaLibraryPath)"
+        }
+        return "Designated media folder: \(mediaLibraryPath)"
     }
 
     // MARK: - Executing View
@@ -355,8 +448,14 @@ struct ScanForMediaDialog: View {
     }
 
     private func executeOperation() {
+        // The two "Designated Media Folder" actions ignore whatever the destination
+        // row says and write to the folder chosen in Settings. One source for it.
+        if selectedAction.usesMediaLibrary {
+            destinationPath = mediaLibraryPath
+        }
+
         // Validate destination path for copy/move operations
-        if selectedAction != .addToPlaylist {
+        if selectedAction.writesFiles {
             let fileManager = FileManager.default
             if !fileManager.fileExists(atPath: destinationPath) {
                 errorMessage = "Destination folder does not exist: \(destinationPath)"
@@ -379,6 +478,10 @@ struct ScanForMediaDialog: View {
             case .copyToOtherPane:
                 await copyFiles()
             case .moveToOtherPane:
+                await moveFiles()
+            case .copyToMediaLibrary:
+                await copyFiles()
+            case .moveToMediaLibrary:
                 await moveFiles()
             }
             await MainActor.run {
@@ -444,13 +547,32 @@ struct ScanForMediaDialog: View {
                     let typeFolder = destURL.appendingPathComponent(mediaType)
                     try? fileManager.createDirectory(at: typeFolder, withIntermediateDirectories: true)
                     destFileURL = typeFolder.appendingPathComponent(fileName)
+
+                case .byMediaTypeThenExtension:
+                    // Audio/MP3/, Audio/M4A/, Video/MP4/, Video/MOV/ — media type is
+                    // the shelf, extension is the row on it.
+                    let mediaType = scanner.getMediaType(for: sourceURL).rawValue
+                    let ext = sourceURL.pathExtension.uppercased()
+                    let nested = destURL
+                        .appendingPathComponent(mediaType)
+                        .appendingPathComponent(ext)
+                    try? fileManager.createDirectory(at: nested, withIntermediateDirectories: true)
+                    destFileURL = nested.appendingPathComponent(fileName)
                 }
 
                 // Handle duplicates
                 destFileURL = getUniqueFileURL(destFileURL)
 
-                // Copy or move
-                if move {
+                // ⛔ GUARDRAIL — a file that belongs to another app is ALWAYS copied,
+                // even when Move is the selected action. His instruction, 2026-09-11:
+                // "it should have a guardrail to only copy from mail attachments no
+                // matter if move is selected or not."
+                //
+                // Moving a Mail attachment out of its container breaks the message it
+                // belongs to, and the same is true of Messages and of the originals
+                // inside a Photos library. The user cannot see that damage until they
+                // open the message, which is far too late for an undo.
+                if move && !MoveGuard.mustCopyNotMove(sourceURL) {
                     try fileManager.moveItem(at: sourceURL, to: destFileURL)
                 } else {
                     try fileManager.copyItem(at: sourceURL, to: destFileURL)

@@ -47,6 +47,8 @@ enum CLIRunner {
                               exit 0 designated and reachable, 1 none, 2 unreachable
           --clear-music-library
                               remove the designation
+          --check-move <path> say whether a file may be moved, or is copy-only
+                              because another app owns it. exit 0 movable, 1 copy-only
           --version           print version, build number, commit and build time
 
           --help              this text
@@ -64,7 +66,20 @@ enum CLIRunner {
         let verb = args[1]
         let known = ["--scan", "--shazam", "--itunes", "--reformat", "--detect",
                      "--set-music-library", "--music-library", "--clear-music-library",
-                     "--version", "--help"]
+                     "--check-move", "--version", "--help"]
+        // ⛔ AN UNRECOGNISED --VERB IS AN ERROR, NOT A REASON TO OPEN THE WINDOW.
+        // 2026-09-11: --check-move was implemented but never added to `known`, so it
+        // fell through here and launched the interface. From the terminal that is
+        // indistinguishable from a hang, and it sent the diagnosis somewhere else
+        // entirely. A typo should say so.
+        //
+        // Anything not starting with "--" still falls through untouched, so a normal
+        // launch and Xcode's own arguments are unaffected.
+        if verb.hasPrefix("--") && !known.contains(verb) {
+            out("error: unknown option \(verb)")
+            usage()
+            exit(2)
+        }
         guard known.contains(verb) else { return }
 
         if verb == "--help" { usage(); exit(0) }
@@ -88,6 +103,23 @@ enum CLIRunner {
             var isDir: ObjCBool = false
             let ok = FileManager.default.fileExists(atPath: p, isDirectory: &isDir) && isDir.boolValue
             exit(ok ? 0 : 2)
+        }
+
+        // Exists so the copy-only guardrail can be tested in BOTH directions.
+        // A guard that can only ever say yes is not a guard.
+        if verb == "--check-move" {
+            guard args.count > 2 else {
+                out("error: --check-move needs a path")
+                exit(2)
+            }
+            let path = (args[2] as NSString).expandingTildeInPath
+            let url = URL(fileURLWithPath: path)
+            if MoveGuard.mustCopyNotMove(url) {
+                out("COPY ONLY — owned by another app: \(path)")
+                exit(1)
+            }
+            out("movable: \(path)")
+            exit(0)
         }
 
         if verb == "--clear-music-library" {

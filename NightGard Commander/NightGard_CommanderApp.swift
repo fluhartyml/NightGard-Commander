@@ -24,6 +24,12 @@ struct NightGard_CommanderApp: App {
         WindowGroup {
             ContentView()
                 .environment(\.managedObjectContext, persistenceController.container.viewContext)
+                // The build number rides in the window title so it can be read off
+                // the screen without opening About. His ask, 2026-09-11, and he was
+                // explicit that this is for us only, before the app is distributed.
+                // ⚠️ REMOVE THIS BEFORE ANY PUBLIC RELEASE — the title bar is not
+                // where a shipped app states its version.
+                .navigationTitle("NightGard Commander — build \(BuildStamp.number)")
         }
         .commands {
             // About must name the exact build. A build that cannot say which commit it
