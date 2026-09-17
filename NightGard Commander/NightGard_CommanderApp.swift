@@ -13,6 +13,11 @@ import AppKit
 struct NightGard_CommanderApp: App {
     let persistenceController = PersistenceController.shared
 
+    // NightGard Library Commander, merged in 2026-09-16 — his goal: "use nightgard commander
+    // as our media playground." It lives in its own window so the two-pane browser is untouched.
+    @State private var libraryService = LibraryService()
+    @State private var lockerService = PlaylistLockerService()
+
     /// Headless command-line mode. Returns immediately unless a recognised
     /// verb was passed, in which case the job runs and the process exits
     /// before any window is created. See CLIRunner.swift.
@@ -41,6 +46,10 @@ struct NightGard_CommanderApp: App {
                 }
             }
 
+            CommandGroup(after: .windowArrangement) {
+                OpenLibraryWindowButton()
+            }
+
             CommandGroup(replacing: .appSettings) {
                 Button("Settings...") {
                     NotificationCenter.default.post(name: .openShazamSettings, object: nil)
@@ -48,6 +57,34 @@ struct NightGard_CommanderApp: App {
                 .keyboardShortcut(",", modifiers: .command)
             }
         }
+
+        Window("Library", id: LibraryWindow.id) {
+            LibraryCommanderView()
+                .environment(libraryService)
+                .environment(lockerService)
+                .task {
+                    await libraryService.authorize()
+                    lockerService.scanLocker()
+                    await libraryService.refreshStats()
+                }
+        }
+        .defaultSize(width: 900, height: 720)
+    }
+}
+
+enum LibraryWindow {
+    static let id = "library"
+}
+
+/// Window > Library (⌘L). A View, because `openWindow` is only reachable from the environment.
+private struct OpenLibraryWindowButton: View {
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        Button("Library") {
+            openWindow(id: LibraryWindow.id)
+        }
+        .keyboardShortcut("l", modifiers: .command)
     }
 }
 

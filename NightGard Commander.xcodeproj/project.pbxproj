@@ -290,7 +290,7 @@
 				AUTOMATION_APPLE_EVENTS = NO;
 				CODE_SIGN_ENTITLEMENTS = "NightGard Commander/NightGard Commander.entitlements";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 52;
+				CURRENT_PROJECT_VERSION = 53;
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = 3X3F6UJ44H;
 				ENABLE_APP_SANDBOX = NO;
@@ -299,6 +299,7 @@
 				ENABLE_RESOURCE_ACCESS_PHOTO_LIBRARY = NO;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "NightGard Commander/Info.plist";
+				INFOPLIST_KEY_NSAppleEventsUsageDescription = "NightGard Commander controls the Music app to update track details and re-import files during library cleanup.";
 				INFOPLIST_KEY_NSAppleMusicUsageDescription = "NightGard Commander needs access to Apple Music to play your music links and videos.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "NightGard Commander uses Shazam to identify songs in your music library and auto-fill metadata.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
@@ -346,7 +347,7 @@
 				AUTOMATION_APPLE_EVENTS = NO;
 				CODE_SIGN_ENTITLEMENTS = "NightGard Commander/NightGard Commander.entitlements";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 52;
+				CURRENT_PROJECT_VERSION = 53;
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = 3X3F6UJ44H;
 				ENABLE_APP_SANDBOX = NO;
@@ -355,6 +356,7 @@
 				ENABLE_RESOURCE_ACCESS_PHOTO_LIBRARY = NO;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "NightGard Commander/Info.plist";
+				INFOPLIST_KEY_NSAppleEventsUsageDescription = "NightGard Commander controls the Music app to update track details and re-import files during library cleanup.";
 				INFOPLIST_KEY_NSAppleMusicUsageDescription = "NightGard Commander needs access to Apple Music to play your music links and videos.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "NightGard Commander uses Shazam to identify songs in your music library and auto-fill metadata.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
@@ -519,7 +521,7 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 52;
+				CURRENT_PROJECT_VERSION = 53;
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = 3X3F6UJ44H;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -546,7 +548,7 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 52;
+				CURRENT_PROJECT_VERSION = 53;
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = 3X3F6UJ44H;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -572,7 +574,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 52;
+				CURRENT_PROJECT_VERSION = 53;
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = 3X3F6UJ44H;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -598,7 +600,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 52;
+				CURRENT_PROJECT_VERSION = 53;
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = 3X3F6UJ44H;
 				GENERATE_INFOPLIST_FILE = YES;
