@@ -282,3 +282,18 @@ His report on 60: *"it fluctuates days 1 hour 50 minutes to 22 minutes"* (and 35
 - Shown figure re-computed at most every 5 s, counted down by elapsed time, eased 25% toward each reading.
 - Rounded: "about 1 h 50 m left" (5-min steps past an hour), whole minutes under, "under a minute left".
 - Self-test on Cold Storage: 159 s job, estimates 324 → 319 → … → 50, never a >3× jump.
+
+## ⬜ PLANNED — his spec, 2026-09-18 18:1x. NOT BUILT. Build after his running Move finishes.
+**1. Pane refresh.** A pane kept listing files a running Move had already taken (derivatives/0: 731
+stale items, preview blank). Panes must refresh as an operation empties or fills the folder they show.
+
+**2. More than one operation from the same two panes.** His words: *"i want to be able to manipulate
+more folders between using the same two panes without leaving them on the same two disk locations."*
+⌘N (a second window) was ruled out: *"command n is not realistic ( not intuitive)"*.
+- **His first choice — PARALLEL:** *"if it would open a new moving or copying bar in parallel would be
+  best"* → Copy/Move stay enabled while something runs; each job gets its own progress bar; the panes
+  are free to navigate elsewhere.
+- **Acceptable fallback — QUEUE**, on his condition: *"as long as you could X the cueued up task before
+  it started without breaking the queue."*
+- Note for the build: parallel jobs share one network link to Cold Storage — each runs slower; the
+  time-left estimate must be per job. Two jobs touching the same item must be refused, not raced.
