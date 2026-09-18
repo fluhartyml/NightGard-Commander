@@ -247,8 +247,14 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
             return (a != nil && a == b) ? .sameContents : .differs
         }
         guard s.size == t.size else { return .differs }
-        return try await bytesEqual(s.url, t.url) ? .sameContents : .differs
+        // Plan 8.5: proven equal on an earlier run and untouched since — not read again.
+        if verified.matches(source: s, target: t) { return .verifiedEarlier }
+        let equal = try await bytesEqual(s.url, t.url)
+        if equal { verified.record(source: s, target: t) }
+        return equal ? .sameContents : .differs
     }
+
+    private let verified = VerifiedCopies()
 
     // MARK: - Phase 1b: ask every question, build the list of steps
 
@@ -445,6 +451,10 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
                 break
             }
         }
+
+        try await buildFolderTree()
+        planFolderProgress()
+
         progress.phase = .transferring
         progress.filesTotal = files
         progress.bytesTotal = bytes
@@ -453,6 +463,8 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
 
         for op in ops {
             try checkCancelled()
+            // A new folder is always shown, never lost to the 0.2 s report throttle.
+            if enterFolder(for: op) { await report(force: true) }
             if let blocked = blockedByFailedFolder(op) {
                 skip(blocked, "Its folder could not be created in the target.")
                 continue
@@ -483,6 +495,120 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
             }
             saveLogIfDue()
         }
+    }
+
+    // MARK: - Plan 8.2: the whole folder tree first
+
+    /// Makes every target folder before a single file moves. His reason: *"if it sets up the
+    /// destination file tree i can quit the app and come back later and finish the copy. the
+    /// merge skip merge makes it almost like a download manager."* A second run of the same
+    /// operation meets folders that already exist, Merge covers them, and only what is
+    /// missing is sent.
+    ///
+    /// ⚠️ Folders at or under something a Replace is about to dispose of are NOT made early:
+    /// the dispose would then throw the fresh, empty folders into the Trash with it. Those are
+    /// made in the normal pass, right after their dispose.
+    private func buildFolderTree() async throws {
+        var disposed: [String] = []
+        for op in ops { if case let .dispose(url) = op { disposed.append(url.path) } }
+        let early = ops.compactMap { op -> URL? in
+            guard case let .makeFolder(_, dst) = op else { return nil }
+            let p = dst.path
+            return disposed.contains { p == $0 || p.hasPrefix($0 + "/") } ? nil : dst
+        }
+        progress.phase = .buildingFolders
+        progress.foldersToMake = early.count
+        await report(force: true)
+
+        for dst in early {
+            try await gate()
+            if failedFolders.contains(where: { dst.path.hasPrefix($0 + "/") }) { continue }
+            progress.currentName = dst.lastPathComponent
+            do {
+                if !exists(dst) {
+                    try fm.createDirectory(at: dst, withIntermediateDirectories: false)
+                    log.entries.append(.createdFolder(path: dst.path))
+                }
+            } catch {
+                // Same rule as the main pass: everything planned inside it is skipped,
+                // said once, instead of one error prompt per file.
+                failedFolders.append(dst.path)
+                summary.failed.append(.init(path: dst.path, reason: error.localizedDescription))
+                log.entries.append(.failed(path: dst.path, message: error.localizedDescription))
+            }
+            progress.foldersMade += 1
+            await report()
+        }
+        removeStalePartials()
+        saveLog()
+    }
+
+    /// Plan 8.6. A copy in flight is written as `.<name>.ngc-partial-XXXXXXXX` and renamed
+    /// only when complete, so a power cut never leaves a half file under the real name. It
+    /// can leave that hidden partial, though. Those names are Commander's own — nothing else
+    /// makes them — so they are cleared from every folder this run is about to write into.
+    private func removeStalePartials() {
+        var folders = Set<String>()
+        for op in ops { if case let .transfer(_, dst, _, _, _) = op { folders.insert(dst.deletingLastPathComponent().path) } }
+        var cleared = 0
+        for folder in folders {
+            let names = (try? fm.contentsOfDirectory(atPath: folder)) ?? []
+            for name in names where name.hasPrefix(".") && name.contains(".ngc-partial-") {
+                if (try? fm.removeItem(atPath: folder + "/" + name)) != nil { cleared += 1 }
+            }
+        }
+        if cleared > 0 {
+            summary.notes.append(.init(path: targetDir.path,
+                reason: "Cleared \(cleared) unfinished file\(cleared == 1 ? "" : "s") left by an earlier run that was cut off. Their originals were never deleted, so they were sent again."))
+        }
+    }
+
+    // MARK: - Plan 8.4: progress by folder
+
+    private var folderOrder: [String: Int] = [:]
+    private var folderFileCounts: [Int] = []
+    private var currentFolder = -1
+
+    private func planFolderProgress() {
+        for op in ops {
+            let dst: URL
+            switch op {
+            case let .transfer(_, d, _, _, _), let .renameMove(_, d): dst = d
+            default: continue
+            }
+            let key = dst.deletingLastPathComponent().path
+            if let i = folderOrder[key] {
+                folderFileCounts[i] += 1
+            } else {
+                folderOrder[key] = folderFileCounts.count
+                folderFileCounts.append(1)
+            }
+        }
+        progress.folderCount = folderFileCounts.count
+    }
+
+    /// True when this step starts a new folder.
+    private func enterFolder(for op: Op) -> Bool {
+        let dst: URL
+        switch op {
+        case let .transfer(_, d, _, _, _), let .renameMove(_, d): dst = d
+        default: return false
+        }
+        let key = dst.deletingLastPathComponent().path
+        guard let i = folderOrder[key] else { return false }
+        let isNew = i != currentFolder
+        if isNew {
+            currentFolder = i
+            progress.folderIndex = i + 1
+            progress.filesInFolder = folderFileCounts[i]
+            progress.fileInFolder = 0
+            let root = targetDir.path
+            var name = key.hasPrefix(root + "/") ? String(key.dropFirst(root.count + 1)) : (key as NSString).lastPathComponent
+            if key == root { name = (root as NSString).lastPathComponent }
+            progress.folderName = name
+        }
+        progress.fileInFolder += 1
+        return isNew
     }
 
     private func perform(_ op: Op) async throws {
@@ -602,6 +728,9 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
             log.entries.append(.moved(from: src.path, to: dst.path))
         } else {
             log.entries.append(.copied(from: src.path, to: dst.path))
+            // Plan 8.5: a re-run of this Copy will not re-read it. The target's date is read
+            // back from the drive, so the record matches what the next run will see.
+            if !s.isSymlink { verified.record(source: s, target: facts(dst)) }
         }
         progress.filesDone += 1
         summary.filesTransferred += 1
@@ -737,6 +866,7 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
 
         while true {
             try await gate()
+            let started = Date()
             let n = read(input, buffer, Self.chunk)
             if n < 0 { if errno == EINTR { continue }; throw posixError("Could not read", src) }
             if n == 0 { break }
@@ -747,6 +877,8 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
                 if w < 0 { if errno == EINTR { continue }; throw posixError("Could not write to the target", dst) }
                 written += w
             }
+            dataSeconds += Date().timeIntervalSince(started)
+            dataBytes += Int64(n)
             addBytes(Int64(n))
             await report()
         }
@@ -766,10 +898,13 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
         defer { buffer.deallocate() }
         while true {
             try await gate()
+            let started = Date()
             let n = read(fd, buffer, Self.chunk)
             if n < 0 { if errno == EINTR { continue }; throw posixError("Could not read back the copy", url) }
             if n == 0 { break }
             hasher.update(bufferPointer: UnsafeRawBufferPointer(start: buffer, count: n))
+            dataSeconds += Date().timeIntervalSince(started)
+            dataBytes += Int64(n)
             addBytes(Int64(n))
             await report()
         }
@@ -836,10 +971,39 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
         }
     }
 
+    // Plan 8.4 — time left from TWO measured rates, not one.
+    //
+    // A transfer costs a fixed amount per file (open, create, fsync, rename, delete — each a
+    // round trip on a network drive) PLUS time per byte. The old estimate divided the bytes
+    // left by bytes-per-second overall, so on the 536,716 tiny files of 2026-09-18 it charged
+    // every file's fixed cost as if it were data and said 174,121 hours; the measured truth
+    // was about four files a second. Here the time spent actually moving data is timed on its
+    // own, the rest is per-file overhead, and each is applied to what is left of its kind.
+    private var dataSeconds: Double = 0
+    private var dataBytes: Int64 = 0
+
+    private func estimate() -> Double? {
+        guard progress.phase == .transferring, let since = runningSince else { return nil }
+        let elapsed = Date().timeIntervalSince(since)
+        guard elapsed > 5, progress.filesDone >= 10 else { return nil }
+        let filesLeft = Double(max(0, progress.filesTotal - progress.filesDone))
+        let bytesLeft = Double(max(0, progress.bytesTotal - progress.bytesDone))
+        let perFile = max(0, elapsed - dataSeconds) / Double(progress.filesDone)
+        var seconds = perFile * filesLeft
+        if bytesLeft > 0 {
+            // No data measured yet (all renames or clones so far): fall back to the overall rate.
+            let rate = dataSeconds > 0.5 ? Double(dataBytes) / dataSeconds : progress.bytesPerSecond
+            guard rate > 1 else { return nil }
+            seconds += bytesLeft / rate
+        }
+        return seconds
+    }
+
     private func report(force: Bool = false) async {
         let now = Date()
         guard force || now.timeIntervalSince(lastReport) > 0.2 else { return }
         lastReport = now
+        progress.secondsLeft = estimate()
         let snapshot = progress
         await delegate.report(snapshot)
     }
@@ -948,9 +1112,22 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
     }
     private var plannedTargets = Set<String>()
 
+    /// A folder's own FILES first, then its subfolders — each group in Finder's order
+    /// (2 before 10). His ask, 2026-09-18: "go in alpha numeric order for transferring the
+    /// within folder to folder files this way i can see actual progress." Files-then-folders
+    /// is what makes one folder's files contiguous; mixed together, a folder's files were
+    /// split around every subfolder that sorted between them. Libraries count as files here —
+    /// they travel as one item.
     private func children(of url: URL) -> [URL] {
-        let items = (try? fm.contentsOfDirectory(at: url, includingPropertiesForKeys: nil, options: [])) ?? []
-        return items.sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
+        let items = (try? fm.contentsOfDirectory(at: url, includingPropertiesForKeys: [.isDirectoryKey, .isPackageKey], options: [])) ?? []
+        let byName: (URL, URL) -> Bool = {
+            $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending
+        }
+        var files: [URL] = [], folders: [URL] = []
+        for item in items {
+            if isPlainFolder(facts(item)) { folders.append(item) } else { files.append(item) }
+        }
+        return files.sorted(by: byName) + folders.sorted(by: byName)
     }
 
     private func facts(_ url: URL) -> FileFacts {

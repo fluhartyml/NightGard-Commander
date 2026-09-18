@@ -222,3 +222,36 @@ written 07:25 09-18) of the source's complete one (32,808 files / 6.2 GB).
   in the pane, and taking it over would break that. Click the bar or its ⤢ button instead. Ask him.
   ⚠️ The video still is verified to be the right frame at the right size; how it LOOKS in the real
   window is unverified — the test snapshots could not draw large images reliably.
+
+## 🗜️ FLATTEN + EXTRACT FROM LIBRARY — his spec, 2026-09-18 ~12:3x. NOT BUILT.
+
+**Flatten.** Source pane: a folder or drive. Target pane: a folder. Every file anywhere under the
+source goes straight into the target — no subfolders. Copy or Move.
+- **Same-name files: Skip or Keep Both**, with **Apply to all**. His: *"if not checked apply to all
+  would make this so you could go folder by folder."* (No Replace offered in Flatten.)
+- **Libraries (`.photoslibrary` etc.) are copied/moved WHOLE, like a single file** — never opened up.
+- ENG: hidden files (`.DS_Store`) skipped.
+- ✅ **After a Flatten Move: ASK the user — Leave (default) or Remove the now-empty folders.** His: *"leave the folders but ask the user what to do."* Only fully empty folders are offered.
+
+**Extract from library** — a second workflow. Source pane: select a library ("deflate"). Target pane:
+a folder. **Copy = the library container is preserved. Move = the container is emptied.**
+- ENG ⚠️: inside a Photos library the originals carry **UUID file names**; the real names, dates,
+  albums and edits live in the library's database, not the files. Extracted files will not have the
+  names he sees in Photos unless the app reads them from the database.
+- ENG: Move-extract from a **LIVE** library stays blocked (MoveGuard) — it would break Photos.
+
+## ✅ BUILT 2026-09-18 — plan section 8: long transfers you can walk away from
+- **The whole target folder tree is made first** (phase "Making the folders first"), then files go
+  folder by folder — **a folder's own files before its subfolders**, each in Finder's order.
+  Folders under something a Replace will throw away are NOT made early (they would go in the Trash with it).
+- **Resume = run the same operation again** → Merge + Apply to all → only what is missing is sent.
+- **Progress by folder:** "Folder 12 of 340 — name — file 88 of 412".
+- **Time left from two measured rates** (per-file overhead + data rate). The old bytes-only figure said
+  174,121 h / 449 h on 536,716 tiny files.
+- **Copy remembers what it already verified** (`~/Library/Application Support/NightGard Commander/Verified copies.tsv`,
+  keyed by target path; valid only while source path, sizes and dates are unchanged) → a re-run does not
+  re-read the network drive. A touched file is compared byte for byte again.
+- **Hidden `.ngc-partial-` files left by a cut-off run are cleared** and the file is sent again; summary says so.
+- Summary headline no longer cut off ("was lef…").
+- 6.3 answered from the code: Apply to all appears only when more collisions of that kind are coming.
+- Self-test: all pass, internal → Raid_4x4 and internal → Cold Storage (SMB).

@@ -280,6 +280,10 @@ private struct FileQuestionView: View {
                  ? "Same name, same size and the same contents, compared byte for byte."
                  : "Same name, same size and the same contents, compared byte for byte. Only their dates differ.")
                 .foregroundStyle(.secondary)
+        case .verifiedEarlier:
+            Text("These two files are identical").font(.title2).bold()
+            Text("Commander copied or compared this exact pair on an earlier run, and neither file's size or date has changed since, so it was not read again.")
+                .foregroundStyle(.secondary)
         case .differs:
             Text("“\(question.source.name)” is already in “\(Fmt.folderName(question.target.url))”")
                 .font(.title2).bold()
@@ -390,6 +394,7 @@ private struct SummaryView: View {
         VStack(alignment: .leading, spacing: 14) {
             Text(title).font(.title2).bold()
             Text(headline).font(.title3)
+                .fixedSize(horizontal: false, vertical: true)  // it was cut off at "was lef…" (2026-09-18)
             if summary.skipped.isEmpty && summary.failed.isEmpty && summary.notes.isEmpty {
                 Label("Nothing was skipped and nothing failed.", systemImage: "checkmark.circle.fill")
                     .foregroundStyle(.green)
@@ -497,12 +502,15 @@ struct FileOperationProgressBar: View {
                     } else {
                         ProgressView().progressViewStyle(.linear)
                     }
-                    if p.phase == .transferring, p.bytesTotal > 0 {
+                    if p.phase == .transferring, p.folderCount > 0 {
+                        Text(folderLine(p)).font(.caption).lineLimit(1).truncationMode(.middle)
+                    }
+                    if p.phase == .transferring, p.bytesTotal > 0 || p.secondsLeft != nil {
                         Text(detail(p)).font(.caption).foregroundStyle(.secondary)
                     }
                 }
                 Button(p.isPaused ? "Resume" : "Pause") { controller.togglePause() }
-                    .disabled(p.phase != .transferring)
+                    .disabled(p.phase != .transferring && p.phase != .buildingFolders)
                 Button("Cancel") { controller.cancel() }
                     .help("Stops after the current file. Nothing half-copied is left behind.")
             }
@@ -518,12 +526,19 @@ struct FileOperationProgressBar: View {
         switch p.phase {
         case .checking:
             return "Checking before anything moves… \(p.itemsChecked.formatted()) items looked at"
+        case .buildingFolders:
+            return "Making the folders first — \(p.foldersMade.formatted()) of \(p.foldersToMake.formatted()) — \(p.currentName)"
         case .transferring:
             if p.isPaused { return "Paused — \(p.filesDone.formatted()) of \(p.filesTotal.formatted()) done" }
             return "\(verb) \(min(p.filesDone + 1, p.filesTotal).formatted()) of \(p.filesTotal.formatted()) — \(p.currentName)"
         case .finishing:
             return "Finishing…"
         }
+    }
+
+    /// Plan 8.4: where it is, by folder — "Folder 12 of 340 — 2025 SEP 02 Photos/2019 — file 88 of 412".
+    private func folderLine(_ p: FileOpProgress) -> String {
+        "Folder \(p.folderIndex.formatted()) of \(p.folderCount.formatted()) — \(p.folderName) — file \(p.fileInFolder.formatted()) of \(p.filesInFolder.formatted())"
     }
 
     private func detail(_ p: FileOpProgress) -> String {
