@@ -31,6 +31,8 @@ struct FileOperationSheet: View {
             case .error(let q): ErrorQuestionView(question: q, controller: controller)
             case .summary(let s): SummaryView(summary: s, controller: controller)
             case .undoLast(let log): UndoLastView(log: log, controller: controller)
+            case .emptyFolders(let q): EmptyFoldersView(question: q, controller: controller)
+            case .extractOptions(let r): ExtractOptionsView(request: r, controller: controller)
             }
         }
         .padding(24)
@@ -88,15 +90,20 @@ private struct SideBySide: View {
     let source: FileFacts
     let target: FileFacts
     var showDates = true
+    /// Plan 6.2 — what each folder holds.
+    var sourceTally: FolderTally? = nil
+    var targetTally: FolderTally? = nil
+    var targetLabel = "Already here"
 
     var body: some View {
         HStack(alignment: .top, spacing: 16) {
-            card("Incoming", source, other: target)
-            card("Already here", target, other: source)
+            card("Incoming", source, other: target, tally: sourceTally, otherTally: targetTally)
+            card(targetLabel, target, other: source, tally: targetTally, otherTally: sourceTally)
         }
     }
 
-    private func card(_ label: String, _ f: FileFacts, other: FileFacts) -> some View {
+    private func card(_ label: String, _ f: FileFacts, other: FileFacts,
+                      tally: FolderTally?, otherTally: FolderTally?) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(label.uppercased()).font(.caption).foregroundStyle(.secondary)
             HStack(spacing: 8) {
@@ -114,6 +121,16 @@ private struct SideBySide: View {
                     }
                 }
                 if !f.isDirectory && f.size >= 1000 { Text(Fmt.exact(f.size)).font(.caption).foregroundStyle(.secondary) }
+            }
+            if let tally {
+                // Plan 6.2: the complete copy shows at a glance — a date alone cannot say it.
+                HStack(spacing: 6) {
+                    Text("\(Fmt.plural(tally.items, "item")) · \(Fmt.size(tally.bytes))").bold()
+                    if let o = otherTally, o.items != tally.items {
+                        Text(tally.items > o.items ? "more" : "fewer").font(.caption)
+                            .padding(.horizontal, 5).background(.quaternary, in: Capsule())
+                    }
+                }
             }
             if showDates {
                 HStack(spacing: 6) {
@@ -155,7 +172,8 @@ private struct FolderQuestionView: View {
                 .font(.title2).bold()
             Text("You are \(question.kind == .move ? "moving" : "copying") a folder into a place that already has a folder with the same name.")
                 .foregroundStyle(.secondary)
-            SideBySide(source: question.source, target: question.target)
+            SideBySide(source: question.source, target: question.target,
+                       sourceTally: question.sourceTally, targetTally: question.targetTally)
             Divider()
             ChoiceRow(title: "Merge",
                       explanation: "Combine the two folders. Anything inside that has the same name gets its own question.",
@@ -251,9 +269,12 @@ private struct FileQuestionView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             header
-            SideBySide(source: question.source, target: question.target)
+            SideBySide(source: question.source, target: question.target,
+                       targetLabel: question.targetIsIncoming ? "Also incoming" : "Already here")
             Divider()
-            if question.unitOnly {
+            if question.flattenOnly {
+                flattenChoices
+            } else if question.unitOnly {
                 unitChoices
             } else if question.isIdentical {
                 identicalChoices
@@ -269,6 +290,30 @@ private struct FileQuestionView: View {
     }
 
     @ViewBuilder private var header: some View {
+        if question.flattenOnly {
+            Text(question.targetIsIncoming
+                 ? "Two files named “\(question.source.name)” are coming into the same folder"
+                 : "“\(question.source.name)” is already in “\(Fmt.folderName(question.target.url))”")
+                .font(.title2).bold()
+            Text("Flattening puts every file in one folder, so files from different folders can share a name. Nothing already there is ever replaced.")
+                .foregroundStyle(.secondary)
+        } else {
+            standardHeader
+        }
+    }
+
+    /// 7.2 — Flatten offers only these two. His words: "skip or keep both and apply to all".
+    @ViewBuilder private var flattenChoices: some View {
+        ChoiceRow(title: "Keep Both",
+                  explanation: "Bring this one in too, renamed with a number, like “\(keepBothName)”.",
+                  isDefault: true) { controller.answerFile(.keepBoth, applyToAll: applyToAll) }
+        ChoiceRow(title: "Skip",
+                  explanation: question.kind == .move
+                    ? "Leave this one where it is, in the source."
+                    : "Do not copy this one.") { controller.answerFile(.skip, applyToAll: applyToAll) }
+    }
+
+    @ViewBuilder private var standardHeader: some View {
         switch question.sameness {
         case .sameSizeAndDate:
             Text("These two files look identical").font(.title2).bold()
@@ -353,6 +398,9 @@ private struct FileQuestionView: View {
 
     private var applyToAllLabel: String {
         let n = question.remainingLikeThis
+        if question.flattenOnly {
+            return "Do the same for the \(Fmt.plural(n, "other file", "other files")) with a name that clashes"
+        }
         let what = question.unitOnly ? "other item like this"
             : (question.isIdentical ? "other identical file" : "other file that clashes")
         let base = "Do the same for the \(Fmt.plural(n, what, question.unitOnly ? "other items like this" : (question.isIdentical ? "other identical files" : "other files that clash")))"
@@ -380,6 +428,111 @@ private struct ErrorQuestionView: View {
             ChoiceRow(title: "Skip All", explanation: "Carry on, and skip anything else that fails without asking. Every skipped item is listed at the end.") { controller.answerError(.skipAll) }
             ChoiceRow(title: "Cancel", explanation: "Stop now. What is already done stays done; nothing half-copied is left behind.") { controller.answerError(.cancel) }
                 .keyboardShortcut(.cancelAction)
+        }
+    }
+}
+
+// MARK: - 7.5: after a Flatten Move — the emptied folders
+
+private struct EmptyFoldersView: View {
+    let question: EmptyFoldersQuestion
+    let controller: FileOperationController
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("The source now has \(Fmt.plural(question.folders.count, "empty folder"))").font(.title2).bold()
+            Text("Every file in them was moved into one folder. What should happen to the folders they came from?")
+                .foregroundStyle(.secondary)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(question.folders.reversed(), id: \.self) { Text($0.path).font(.callout.monospaced()) }
+                }
+            }
+            .frame(maxHeight: 160)
+            Divider()
+            ChoiceRow(title: "Leave Them",
+                      explanation: "Keep the empty folders where they are. Nothing else changes.",
+                      isDefault: true) { controller.answerEmptyFolders(remove: false) }
+            ChoiceRow(title: "Remove Them",
+                      explanation: "Delete these empty folders. Only folders with nothing left in them are listed here; any folder still holding a file stays.") {
+                controller.answerEmptyFolders(remove: true)
+            }
+        }
+    }
+}
+
+// MARK: - 7.6 / 7.9: Extract from a Photos library — Copy or Move, and the file type
+
+private struct ExtractOptionsView: View {
+    let request: FileOperationController.ExtractRequest
+    let controller: FileOperationController
+    @State private var move = false
+    @State private var type = 1         // 0 Original · 1 JPEG · 2 PNG · 3 TIFF — his pick is JPEG
+    @State private var quality = 0.9
+
+    private var format: ExtractFormat {
+        switch type {
+        case 0: return .original
+        case 2: return .png
+        case 3: return .tiff
+        default: return .jpeg(quality: quality)
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Extract photos from “\(request.library.lastPathComponent)”").font(.title2).bold()
+            Text("Every photo in the library goes into “\(request.target.lastPathComponent)” under the name and date it has in Photos — not the code names the library stores them under. Live Photos bring their short video along beside them.")
+                .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+
+            Picker("", selection: $move) {
+                Text("Copy").tag(false)
+                Text("Move").tag(true)
+            }
+            .pickerStyle(.segmented).labelsHidden()
+            Text(move
+                 ? "Move takes the originals OUT of the library and leaves it empty of photos. The library will no longer open with its pictures. A library Photos is using right now is always copied instead."
+                 : "Copy leaves the library exactly as it was.")
+                .foregroundStyle(move ? .red : .secondary).fixedSize(horizontal: false, vertical: true)
+
+            Picker("File type", selection: $type) {
+                Text("Original").tag(0)
+                Text("JPEG").tag(1)
+                Text("PNG").tag(2)
+                Text("TIFF").tag(3)
+            }
+            .pickerStyle(.segmented)
+            Text(typeExplanation).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            if type == 1 {
+                HStack {
+                    Text("Quality")
+                    Slider(value: $quality, in: 0.5...1.0, step: 0.05)
+                    Text("\(Int(quality * 100))%").monospacedDigit().frame(width: 44, alignment: .trailing)
+                }
+            }
+            if move && type != 0 {
+                Label("Each original goes to the Trash after its converted copy is checked — or is deleted on a network drive, which has no Trash.",
+                      systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
+            }
+            HStack {
+                Spacer()
+                Button("Cancel") { controller.answerExtract(request, kind: nil, format: format) }
+                    .keyboardShortcut(.cancelAction).controlSize(.large)
+                Button(move ? "Extract and Move" : "Extract") {
+                    controller.answerExtract(request, kind: move ? .move : .copy, format: format)
+                }
+                .keyboardShortcut(.defaultAction).controlSize(.large)
+            }
+        }
+    }
+
+    private var typeExplanation: String {
+        switch type {
+        case 0: return "Exactly as stored, usually HEIC. Fastest, and nothing is lost."
+        case 2: return "Loses no quality, but the files are much larger. Some print shops ask for it."
+        case 3: return "Loses no quality; the files are large. The usual choice for print shops."
+        default: return "Opens anywhere. HEIC photos are compressed again — invisible at high quality, but not the original. Videos are always kept as they are."
         }
     }
 }
@@ -521,7 +674,12 @@ struct FileOperationProgressBar: View {
     }
 
     private func line(_ p: FileOpProgress) -> String {
-        let verb = controller.isUndo ? "Undoing" : controller.runningKind.gerund
+        let verb: String
+        switch controller.runningMode {
+        case .flatten: verb = controller.runningKind == .move ? "Flattening (moving)" : "Flattening (copying)"
+        case .extract: verb = controller.runningKind == .move ? "Extracting (moving)" : "Extracting"
+        case .standard: verb = controller.isUndo ? "Undoing" : controller.runningKind.gerund
+        }
         if controller.presented != nil, p.phase == .checking { return "Waiting for your answer…" }
         switch p.phase {
         case .checking:

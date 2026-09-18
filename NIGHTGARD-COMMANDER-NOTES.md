@@ -255,3 +255,22 @@ a folder. **Copy = the library container is preserved. Move = the container is e
 - Summary headline no longer cut off ("was lef…").
 - 6.3 answered from the code: Apply to all appears only when more collisions of that kind are coming.
 - Self-test: all pass, internal → Raid_4x4 and internal → Cold Storage (SMB).
+
+## ✅ BUILT 2026-09-18 — plan 6.2 and all of section 7 (7.1–7.11)
+- **6.2** — the folder question shows what each side holds ("12 items · 78 KB · more" vs "1 item · 7 bytes · fewer").
+- **Operations menu:** Flatten Copy… ⌥⌘5 · Flatten Move… ⌥⌘6 · Extract from Photos Library… ⌥⌘E (source pane → target pane).
+- **Flatten (7.1–7.5):** every file under the selection into the target folder, no subfolders. Same-name files
+  (from the target OR from two source folders) ask **Keep Both / Skip** + Apply to all — nothing is ever replaced.
+  Libraries/packages go whole. Hidden files stay (summary says how many). After a Flatten **Move**: asks
+  **Leave Them (default) / Remove Them** for the emptied folders; a folder still holding anything is never offered.
+- **Extract (7.6–7.11):** reads `database/Photos.sqlite` from a COPY (never opens the library's own file) →
+  real names (ZADDITIONALASSETATTRIBUTES.ZORIGINALFILENAME) and date taken (ZASSET.ZDATECREATED) on each file.
+  Live Photo video beside it as `<name>.mov`. Skips Recently Deleted and iCloud-only originals, and says so.
+  **Original / JPEG (quality slider, default 90%) / PNG / TIFF** via ImageIO — metadata carried across.
+  Copy leaves the library alone. Move empties it: an unconverted original is moved (Undo puts it back under its
+  code name); a converted one's original goes to the Trash after the new file is read back. A LIVE library is
+  always copied (MoveGuard). Works on a .photoslibrary or a plain-folder backup of one. "Masters" (pre-10.15) refused.
+- **Fixed, found by the self-test:** 8.5's verified record now includes both files' inodes — a file deleted and
+  re-created with the same size and date had matched its old record and been called identical unread.
+- Self-test: ALL PASSED twice each on Raid_4x4 and Cold Storage (SMB); UI harness drew every new popup.
+- Still open (his call): 4.10 — Space stays play/pause; the bar is clicked to grow the player.

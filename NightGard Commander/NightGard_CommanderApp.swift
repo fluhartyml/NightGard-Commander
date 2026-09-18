@@ -57,6 +57,23 @@ struct NightGard_CommanderApp: App {
                 OpenLibraryWindowButton()
             }
 
+            // Plan section 7 — source pane → target pane, like Copy and Move.
+            CommandMenu("Operations") {
+                Button("Flatten Copy…") {
+                    NotificationCenter.default.post(name: .flattenCopy, object: nil)
+                }
+                .keyboardShortcut("5", modifiers: [.command, .option])
+                Button("Flatten Move…") {
+                    NotificationCenter.default.post(name: .flattenMove, object: nil)
+                }
+                .keyboardShortcut("6", modifiers: [.command, .option])
+                Divider()
+                Button("Extract from Photos Library…") {
+                    NotificationCenter.default.post(name: .extractFromLibrary, object: nil)
+                }
+                .keyboardShortcut("e", modifiers: [.command, .option])
+            }
+
             CommandGroup(replacing: .appSettings) {
                 Button("Settings...") {
                     NotificationCenter.default.post(name: .openShazamSettings, object: nil)
@@ -129,4 +146,7 @@ private func showAboutPanel() {
 extension Notification.Name {
     static let openShazamSettings = Notification.Name("openShazamSettings")
     static let undoLastMove = Notification.Name("undoLastMove")
+    static let flattenCopy = Notification.Name("flattenCopy")
+    static let flattenMove = Notification.Name("flattenMove")
+    static let extractFromLibrary = Notification.Name("extractFromLibrary")
 }

@@ -25,6 +25,61 @@ nonisolated enum FileOpKind: String, Sendable, Codable {
     var pastTense: String { self == .copy ? "copied" : "moved" }
 }
 
+/// Plan section 7. A normal Copy/Move keeps the folder tree; the other two flatten it.
+nonisolated enum FileOpMode: Sendable, Equatable {
+    case standard
+    /// 7.1 — every file anywhere under the source goes straight into the target folder.
+    case flatten
+    /// 7.6 — the originals inside a Photos library, under their REAL names and dates (7.7),
+    /// optionally converted (7.9). Copy leaves the library as it was; Move empties it.
+    case extract(ExtractFormat)
+
+    var title: String {
+        switch self {
+        case .standard: return ""
+        case .flatten: return "Flatten"
+        case .extract: return "Extract"
+        }
+    }
+}
+
+/// 7.9 — his ask: "i would choose jpg but maybe a printshop uses png or another format".
+nonisolated enum ExtractFormat: Sendable, Equatable, Hashable {
+    /// Exactly as stored (usually HEIC). Fastest, nothing lost.
+    case original
+    /// Quality 0…1.
+    case jpeg(quality: Double)
+    case png
+    case tiff
+
+    var fileExtension: String? {
+        switch self {
+        case .original: return nil
+        case .jpeg: return "jpg"
+        case .png: return "png"
+        case .tiff: return "tiff"
+        }
+    }
+
+    var label: String {
+        switch self {
+        case .original: return "Original"
+        case .jpeg: return "JPEG"
+        case .png: return "PNG"
+        case .tiff: return "TIFF"
+        }
+    }
+}
+
+/// How much a folder holds — shown on both cards of the folder question (plan 6.2), so a
+/// partial copy (750 items, 191 KB) is obvious next to the complete one (32,808 items,
+/// 6.2 GB). The date alone called the partial one "newer" and said nothing about which was
+/// complete.
+nonisolated struct FolderTally: Sendable {
+    let items: Int
+    let bytes: Int64
+}
+
 /// What the engine knows about one side of a collision.
 nonisolated struct FileFacts: Sendable {
     let url: URL
@@ -46,6 +101,9 @@ nonisolated struct FolderQuestion: Sendable {
     let target: FileFacts
     /// Other folder conflicts still to come — what "Apply to all" would cover.
     let remainingLikeThis: Int
+    /// Plan 6.2. Nil only if counting was impossible (e.g. unreadable).
+    var sourceTally: FolderTally? = nil
+    var targetTally: FolderTally? = nil
 }
 
 nonisolated enum FolderChoice: Sendable { case merge, replace, skip, cancel }
@@ -85,6 +143,12 @@ nonisolated struct FileQuestion: Sendable {
     let remainingLikeThis: Int
     /// False on a network drive — the file already there is deleted immediately.
     let targetGoesToTrash: Bool
+    /// Flatten and Extract (7.2): only Skip or Keep Both. His words: "skip or keep both and
+    /// apply to all checkbox". Nothing already there is ever replaced by a flatten.
+    var flattenOnly = false
+    /// Two INCOMING files with the same name (a flatten brings IMG_0001.jpg in from many
+    /// folders) — the "already here" side is another source file, not something in the target.
+    var targetIsIncoming = false
 
     var isIdentical: Bool { sameness != .differs }
 }
@@ -95,6 +159,12 @@ nonisolated enum FileChoice: Sendable {
     /// duplicate is removed. Asked, never assumed (his 3.6).
     case removeFromSource
     case cancel
+}
+
+/// 7.5 — after a Flatten Move. His words: "leave the folders but ask the user what to do."
+/// Leave is the default. Only folders left completely empty are offered.
+nonisolated struct EmptyFoldersQuestion: Sendable {
+    let folders: [URL]
 }
 
 nonisolated struct ErrorQuestion: Sendable {
@@ -215,11 +285,22 @@ nonisolated struct OperationLog: Codable, Sendable {
 /// Append-only text, one line per pair, so recording costs one short write and a crash
 /// loses at most the last line. Later lines win on load.
 nonisolated final class VerifiedCopies: @unchecked Sendable {
+    /// ⚠️ THE INODES ARE LOAD-BEARING. Without them a file that was DELETED AND RE-CREATED
+    /// with the same size and date still matched its old record and was called identical
+    /// without being read — caught by the self-test on 2026-09-18 (build 60), where the test
+    /// re-creates the same files on every run. A re-created file gets a new inode.
     struct Entry: Equatable {
         let sourcePath: String
         let size: Int64
         let sourceModified: Double
         let targetModified: Double
+        let sourceInode: UInt64
+        let targetInode: UInt64
+    }
+
+    private static func inode(_ url: URL) -> UInt64? {
+        var st = stat()
+        return lstat(url.path, &st) == 0 ? UInt64(st.st_ino) : nil
     }
 
     static var file: URL {
@@ -234,16 +315,20 @@ nonisolated final class VerifiedCopies: @unchecked Sendable {
 
     func matches(source: FileFacts, target: FileFacts) -> Bool {
         guard let s = source.modified, let t = target.modified,
+              let si = Self.inode(source.url), let ti = Self.inode(target.url),
               let e = load()[target.url.path] else { return false }
         return e == Entry(sourcePath: source.url.path, size: source.size,
-                          sourceModified: Self.round(s), targetModified: Self.round(t))
+                          sourceModified: Self.round(s), targetModified: Self.round(t),
+                          sourceInode: si, targetInode: ti)
             && target.size == source.size
     }
 
     func record(source: FileFacts, target: FileFacts) {
-        guard let s = source.modified, let t = target.modified, source.size == target.size else { return }
+        guard let s = source.modified, let t = target.modified, source.size == target.size,
+              let si = Self.inode(source.url), let ti = Self.inode(target.url) else { return }
         let e = Entry(sourcePath: source.url.path, size: source.size,
-                      sourceModified: Self.round(s), targetModified: Self.round(t))
+                      sourceModified: Self.round(s), targetModified: Self.round(t),
+                      sourceInode: si, targetInode: ti)
         lock.lock(); defer { lock.unlock() }
         _ = loadLocked()
         entries?[target.url.path] = e
@@ -251,7 +336,7 @@ nonisolated final class VerifiedCopies: @unchecked Sendable {
         // simply not remembered (they are compared again next time, which is still correct).
         let fields = [target.url.path, e.sourcePath]
         guard !fields.contains(where: { $0.contains("\t") || $0.contains("\n") }) else { return }
-        let line = "\(target.url.path)\t\(e.sourcePath)\t\(e.size)\t\(e.sourceModified)\t\(e.targetModified)\n"
+        let line = "\(target.url.path)\t\(e.sourcePath)\t\(e.size)\t\(e.sourceModified)\t\(e.targetModified)\t\(e.sourceInode)\t\(e.targetInode)\n"
         let url = Self.file
         try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         if let h = try? FileHandle(forWritingTo: url) {
@@ -272,8 +357,12 @@ nonisolated final class VerifiedCopies: @unchecked Sendable {
         if let text = try? String(contentsOf: Self.file, encoding: .utf8) {
             for line in text.split(separator: "\n") {
                 let f = line.split(separator: "\t", omittingEmptySubsequences: false)
-                guard f.count == 5, let size = Int64(f[2]), let sm = Double(f[3]), let tm = Double(f[4]) else { continue }
-                map[String(f[0])] = Entry(sourcePath: String(f[1]), size: size, sourceModified: sm, targetModified: tm)
+                // Lines from build 59 (five fields, no inodes) are ignored: those pairs are
+                // simply compared again once, which is always safe.
+                guard f.count == 7, let size = Int64(f[2]), let sm = Double(f[3]), let tm = Double(f[4]),
+                      let si = UInt64(f[5]), let ti = UInt64(f[6]) else { continue }
+                map[String(f[0])] = Entry(sourcePath: String(f[1]), size: size, sourceModified: sm,
+                                          targetModified: tm, sourceInode: si, targetInode: ti)
             }
         }
         entries = map

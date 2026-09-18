@@ -591,6 +591,15 @@ struct ContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: .undoLastMove)) { _ in
             fileOps.offerUndoLastMove()
         }
+        .onReceive(NotificationCenter.default.publisher(for: .flattenCopy)) { _ in
+            flattenToOtherPane(.copy)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .flattenMove)) { _ in
+            flattenToOtherPane(.move)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .extractFromLibrary)) { _ in
+            extractToOtherPane()
+        }
         .sheet(isPresented: $showTextEditor) {
             if let item = previewItem {
                 TextFileEditor(
@@ -914,6 +923,31 @@ struct ContentView: View {
                 }
             }
         }
+    }
+
+    /// Plan 7.1 — every file under the selected folders (source pane) straight into the other
+    /// pane's folder (target), with no subfolders. Libraries go across whole.
+    private func flattenToOtherPane(_ kind: FileOpKind) {
+        let pane = focusedPane
+        let selectedIDs = pane == .left ? selectedLeftItems : selectedRightItems
+        let sourceFiles = activeFocusedFileSystem.files.filter { selectedIDs.contains($0.id) }
+        guard !sourceFiles.isEmpty, !fileOps.isRunning else { return }
+        let targetPath = pane == .left ? rightFileSystem.currentPath : leftFileSystem.currentPath
+        fileOps.start(kind,
+                      sources: sourceFiles.map { URL(fileURLWithPath: $0.path) },
+                      target: URL(fileURLWithPath: targetPath), mode: .flatten) { _ in
+            guard kind == .move else { return }
+            if pane == .left { selectedLeftItem = nil; selectedLeftItems.removeAll() }
+            else { selectedRightItem = nil; selectedRightItems.removeAll() }
+        }
+    }
+
+    /// Plan 7.6 — the Photos library selected in the source pane, out into the other pane's
+    /// folder under real names and dates. Asks Copy or Move and the file type first.
+    private func extractToOtherPane() {
+        guard let item = activeSelectedItem, !fileOps.isRunning else { return }
+        let targetPath = focusedPane == .left ? rightFileSystem.currentPath : leftFileSystem.currentPath
+        fileOps.offerExtract(library: URL(fileURLWithPath: item.path), target: URL(fileURLWithPath: targetPath))
     }
 
     private func playNextTrackInFocusedPane(preferredTrackName: String? = nil) {

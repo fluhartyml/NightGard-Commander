@@ -49,6 +49,8 @@
 import Foundation
 import CryptoKit
 import Darwin
+import ImageIO
+import UniformTypeIdentifiers
 
 /// The UI side: asks Michael, shows progress. Implemented by FileOperationController.
 @MainActor
@@ -57,6 +59,8 @@ protocol FileOpDelegate: AnyObject, Sendable {
     func confirmReplace(_ question: ReplaceConfirm) async -> Bool
     func askFile(_ question: FileQuestion) async -> Answer<FileChoice>
     func askError(_ question: ErrorQuestion) async -> ErrorChoice
+    /// 7.5 — true = remove the now-empty source folders; false = leave them (the default).
+    func askEmptyFolders(_ question: EmptyFoldersQuestion) async -> Bool
     func report(_ progress: FileOpProgress)
 }
 
@@ -77,6 +81,9 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
         /// Finder's window-layout file (.DS_Store) in a merge — not his data.
         case discardSourceDSStore(URL)
         case removeSourceFolderIfEmpty(URL)
+        /// Extract (7.6): one original out of a Photos library under its real name, dated
+        /// when it was taken, converted when `format` is not `.original` (7.9).
+        case extract(src: URL, dst: URL, move: Bool, format: ExtractFormat, date: Date?, size: Int64)
     }
 
     private struct EngineError: LocalizedError {
@@ -87,6 +94,7 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
     // MARK: - State
 
     let kind: FileOpKind
+    let mode: FileOpMode
     let sources: [URL]
     let targetDir: URL
     let control: FileOpControl
@@ -124,8 +132,9 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
     private var failedFolders: [String] = []
 
     init(kind: FileOpKind, sources: [URL], targetDir: URL, control: FileOpControl,
-         delegate: any FileOpDelegate) {
+         delegate: any FileOpDelegate, mode: FileOpMode = .standard) {
         self.kind = kind
+        self.mode = mode
         self.sources = sources.map { $0.standardizedFileURL }
         self.targetDir = targetDir.standardizedFileURL
         self.targetDevice = Self.device(of: targetDir)
@@ -139,6 +148,7 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
     /// Undo a logged Move: everything goes back where it came from.
     init(undoing log: OperationLog, control: FileOpControl, delegate: any FileOpDelegate) {
         self.kind = .move
+        self.mode = .standard
         self.sources = []
         self.targetDir = URL(fileURLWithPath: log.target)
         self.targetDevice = Self.device(of: URL(fileURLWithPath: log.target))
@@ -163,13 +173,21 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
         do {
             let valid = validatedSources()
             progress.phase = .checking
-            for src in valid {
-                try await preScan(src: src, dst: targetDir.appendingPathComponent(src.lastPathComponent))
-            }
-            for src in valid {
-                try await decide(src: src, dst: targetDir.appendingPathComponent(src.lastPathComponent))
+            switch mode {
+            case .standard:
+                for src in valid {
+                    try await preScan(src: src, dst: targetDir.appendingPathComponent(src.lastPathComponent))
+                }
+                for src in valid {
+                    try await decide(src: src, dst: targetDir.appendingPathComponent(src.lastPathComponent))
+                }
+            case .flatten:
+                try await planFlatten(valid)
+            case let .extract(format):
+                try await planExtract(valid, format: format)
             }
             try await execute()
+            if mode == .flatten && kind == .move { try await offerEmptyFolders(valid) }
         } catch is FileOpCancelled {
             summary.cancelled = true
             log.cancelled = true
@@ -279,8 +297,11 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
             var choice = folderForAll
             var applyToAll = false
             if choice == nil {
-                let answer = await delegate.askFolder(FolderQuestion(
-                    kind: kind, source: s, target: t, remainingLikeThis: pendingFolders.count))
+                var question = FolderQuestion(kind: kind, source: s, target: t, remainingLikeThis: pendingFolders.count)
+                // Plan 6.2: how much each side holds, so the complete copy is obvious.
+                question.sourceTally = folderTally(src)
+                question.targetTally = folderTally(dst)
+                let answer = await delegate.askFolder(question)
                 choice = answer.choice
                 applyToAll = answer.applyToAll
                 if applyToAll { folderForAll = answer.choice }
@@ -435,6 +456,286 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
         return ok
     }
 
+    private func countText(_ n: Int, _ word: String) -> String { "\(n.formatted()) \(word)\(n == 1 ? "" : "s")" }
+
+    // MARK: - Plan 6.2: how much a folder holds
+
+    private func folderTally(_ url: URL) -> FolderTally? {
+        var files = 0
+        var bytes: Int64 = 0
+        guard exists(url) else { return nil }
+        tally(url, files: &files, bytes: &bytes)
+        return FolderTally(items: files, bytes: bytes)
+    }
+
+    // MARK: - Plan 7.1–7.5: Flatten
+
+    /// "Apply to all" for the flatten question — Skip or Keep Both only (7.2).
+    private var flattenForAll: FileChoice?
+    private var hiddenLeftBehind = 0
+
+    /// Every file under each source goes straight into the target. Libraries and other
+    /// packages travel whole, like a single file (7.3). Hidden files stay put (7.4).
+    private func planFlatten(_ roots: [URL]) async throws {
+        var items: [URL] = []
+        for root in roots { try await collectFlat(root, isRoot: true, into: &items) }
+        if hiddenLeftBehind > 0 {
+            summary.notes.append(.init(path: roots.first?.path ?? targetDir.path,
+                reason: "\(countText(hiddenLeftBehind, "hidden item")) (such as .DS_Store) \(hiddenLeftBehind == 1 ? "was" : "were") left in the source — Flatten skips hidden files."))
+        }
+        var remaining = countFlatClashes(items.map(\.lastPathComponent))
+        var claimed: [String: URL] = [:]
+        for src in items {
+            try checkCancelled()
+            let s = facts(src)
+            guard let dst = try await resolveFlatTarget(src: src, facts: s, name: src.lastPathComponent,
+                                                        remaining: &remaining, claimed: &claimed) else { continue }
+            try addNew(src: src, dst: dst, facts: s, move: mayMove(src))
+        }
+    }
+
+    private func collectFlat(_ url: URL, isRoot: Bool, into items: inout [URL]) async throws {
+        try checkCancelled()
+        if !isRoot && url.lastPathComponent.hasPrefix(".") { hiddenLeftBehind += 1; return }
+        if isPlainFolder(facts(url)) {
+            for child in children(of: url) { try await collectFlat(child, isRoot: false, into: &items) }
+            return
+        }
+        items.append(url)
+        progress.itemsChecked += 1
+        progress.currentName = url.lastPathComponent
+        await report()
+    }
+
+    /// How many incoming names will meet something — already in the target, or another
+    /// incoming file with the same name. What "Apply to all" covers.
+    private func countFlatClashes(_ names: [String]) -> Int {
+        var seen = Set<String>()
+        var clashes = 0
+        for name in names {
+            let path = targetDir.appendingPathComponent(name).path
+            if seen.contains(path) || exists(URL(fileURLWithPath: path)) { clashes += 1 }
+            seen.insert(path)
+        }
+        return clashes
+    }
+
+    /// The target for one flattened item, or nil if he chose Skip. Only Skip or Keep Both
+    /// are offered (7.2) — a flatten never replaces what is already there.
+    private func resolveFlatTarget(src: URL, facts s: FileFacts, name: String, remaining: inout Int,
+                                   claimed: inout [String: URL]) async throws -> URL? {
+        var dst = targetDir.appendingPathComponent(name)
+        let inTarget = exists(dst)
+        let incoming = claimed[dst.path]
+        if inTarget || incoming != nil {
+            remaining = max(0, remaining - 1)
+            var choice = flattenForAll
+            if choice == nil {
+                var question = FileQuestion(kind: kind, source: s, target: incoming.map(facts) ?? facts(dst),
+                                            sameness: .differs, unitOnly: false, remainingLikeThis: remaining,
+                                            targetGoesToTrash: isLocalVolume(dst))
+                question.flattenOnly = true
+                question.targetIsIncoming = !inTarget
+                let answer = await delegate.askFile(question)
+                choice = answer.choice
+                if answer.applyToAll { flattenForAll = answer.choice }
+            }
+            switch choice ?? .cancel {
+            case .cancel:
+                throw FileOpCancelled()
+            case .keepBoth:
+                dst = uniqueName(for: dst)
+            default:
+                skip(src, inTarget ? "A file named “\(name)” is already in the target — you chose Skip."
+                                   : "Another file named “\(name)” is coming from a different folder — you chose Skip.")
+                return nil
+            }
+        }
+        claimed[dst.path] = src
+        plannedTargets.insert(dst.path)
+        return dst
+    }
+
+    /// 7.5 — after a Flatten Move the source folders are empty shells. Leave them unless he
+    /// says otherwise. A folder still holding anything (a skipped file, a hidden file other
+    /// than Finder's .DS_Store) is never offered.
+    private func offerEmptyFolders(_ roots: [URL]) async throws {
+        var empties: [URL] = []
+        for root in roots where isPlainFolder(facts(root)) { _ = collectEmpty(root, into: &empties) }
+        guard !empties.isEmpty else { return }
+        guard await delegate.askEmptyFolders(EmptyFoldersQuestion(folders: empties)) else {
+            summary.notes.append(.init(path: roots.first?.path ?? "",
+                reason: "\(countText(empties.count, "empty folder")) left in the source, as you chose."))
+            return
+        }
+        for folder in empties {   // deepest first — collectEmpty adds a folder after its children
+            try? fm.removeItem(at: folder.appendingPathComponent(".DS_Store"))
+            if rmdir(folder.path) == 0 {
+                log.entries.append(.removedSourceFolder(path: folder.path))
+            } else {
+                summary.notes.append(.init(path: folder.path, reason: "Could not remove this empty folder: \(String(cString: strerror(errno)))."))
+            }
+        }
+        saveLog()
+    }
+
+    private func collectEmpty(_ url: URL, into out: inout [URL]) -> Bool {
+        let names = (try? fm.contentsOfDirectory(atPath: url.path)) ?? ["?"]
+        var empty = true
+        for name in names where name != ".DS_Store" {
+            let child = url.appendingPathComponent(name)
+            if isPlainFolder(facts(child)) {
+                if !collectEmpty(child, into: &out) { empty = false }
+            } else {
+                empty = false
+            }
+        }
+        if empty { out.append(url) }
+        return empty
+    }
+
+    // MARK: - Plan 7.6–7.11: Extract from a Photos library
+
+    private func planExtract(_ roots: [URL], format: ExtractFormat) async throws {
+        guard roots.count == 1, let library = roots.first else {
+            summary.failed.append(.init(path: targetDir.path, reason: "Choose one Photos library to extract from."))
+            return
+        }
+        guard PhotosLibraryReader.isPhotosLibrary(library) else {
+            summary.failed.append(.init(path: library.path, reason: "“\(library.lastPathComponent)” is not a Photos library."))
+            return
+        }
+        progress.currentName = "Reading the Photos library's database…"
+        await report(force: true)
+        let contents = try PhotosLibraryReader.read(library)
+
+        if contents.trashed > 0 {
+            summary.notes.append(.init(path: library.path, reason: "\(countText(contents.trashed, "photo")) in Recently Deleted \(contents.trashed == 1 ? "was" : "were") not extracted."))
+        }
+        if contents.missingOriginals > 0 {
+            summary.notes.append(.init(path: library.path, reason: "\(countText(contents.missingOriginals, "photo")) \(contents.missingOriginals == 1 ? "has" : "have") no original on this drive (kept in iCloud only), so \(contents.missingOriginals == 1 ? "it was" : "they were") not extracted."))
+        }
+        if kind == .move, let reason = MoveGuard.reason(library) {
+            summary.notes.append(.init(path: library.path, reason: "Copied, not moved — \(reason). Moving originals out of the library Photos is using would break it."))
+        }
+
+        // Each asset, plus a Live Photo's video beside it: (stored file, name to give it, date, convert?)
+        var planned: [(src: URL, name: String, date: Date?, convert: Bool)] = []
+        for asset in contents.assets {
+            let ext = asset.storedURL.pathExtension
+            let isImage = UTType(filenameExtension: ext)?.conforms(to: .image) ?? false
+            var name = asset.realName
+            if isImage, let newExt = format.fileExtension {
+                name = (asset.realName as NSString).deletingPathExtension + "." + newExt
+            }
+            planned.append((asset.storedURL, name, asset.dateTaken, isImage && format != .original))
+            if let video = asset.livePhotoVideo {
+                planned.append((video, (asset.realName as NSString).deletingPathExtension + ".mov", asset.dateTaken, false))
+            }
+        }
+
+        var remaining = countFlatClashes(planned.map(\.name))
+        var claimed: [String: URL] = [:]
+        for item in planned {
+            try checkCancelled()
+            let s = facts(item.src)
+            progress.itemsChecked += 1
+            progress.currentName = item.name
+            await report()
+            guard let dst = try await resolveFlatTarget(src: item.src, facts: s, name: item.name,
+                                                        remaining: &remaining, claimed: &claimed) else { continue }
+            let move = kind == .move && MoveGuard.reason(item.src) == nil
+            ops.append(.extract(src: item.src, dst: dst, move: move,
+                                format: item.convert ? format : .original, date: item.date, size: s.size))
+        }
+    }
+
+    /// One original out of the library. Written under a hidden partial name and renamed
+    /// only when complete, like every other transfer. Dated when the photo was taken.
+    ///
+    /// ⚠️ A MOVE THAT CONVERTS cannot byte-verify — the new file is meant to differ. So the
+    /// converted file is read back as an image first, and the original then goes to the
+    /// Trash (deleted on a network drive, which has none) rather than being erased, so Undo
+    /// can bring it back where it can.
+    private func extractFile(src: URL, dst: URL, move: Bool, format: ExtractFormat, date: Date?, size: Int64) async throws {
+        progress.currentName = dst.lastPathComponent
+        await report()
+        let partial = dst.deletingLastPathComponent()
+            .appendingPathComponent(".\(dst.lastPathComponent).ngc-partial-\(UUID().uuidString.prefix(8))")
+        var partialExists = false
+        defer { if partialExists { try? fm.removeItem(at: partial) } }
+
+        if format == .original {
+            partialExists = true
+            let digest = try await streamCopy(from: src, to: partial, hashing: move)
+            _ = copyfile(src.path, partial.path, nil, copyfile_flags_t(COPYFILE_STAT | COPYFILE_XATTR))
+            if move {
+                progress.currentName = "Verifying " + dst.lastPathComponent
+                guard try await hashFile(partial) == digest else {
+                    throw EngineError(message: "The copy of “\(dst.lastPathComponent)” does not match the original. The original was NOT removed.")
+                }
+            } else if facts(partial).size != size {
+                throw EngineError(message: "The copy of “\(dst.lastPathComponent)” is the wrong size.")
+            }
+        } else {
+            partialExists = true
+            try await gate()
+            try convertImage(src, to: partial, format: format)
+            addBytes(size)
+            guard let check = CGImageSourceCreateWithURL(partial as CFURL, nil), CGImageSourceGetCount(check) > 0 else {
+                throw EngineError(message: "The converted copy of “\(dst.lastPathComponent)” could not be read back. The original was NOT removed.")
+            }
+        }
+
+        if let date {
+            try? fm.setAttributes([.creationDate: date, .modificationDate: date], ofItemAtPath: partial.path)
+        }
+        guard !exists(dst) else { throw EngineError(message: "“\(dst.lastPathComponent)” is already in the target.") }
+        try posixRename(partial, dst)
+        partialExists = false
+
+        if move {
+            if format == .original {
+                try fm.removeItem(at: src)
+                log.entries.append(.moved(from: src.path, to: dst.path))
+            } else {
+                log.entries.append(.copied(from: src.path, to: dst.path))
+                try dispose(src)
+            }
+        } else {
+            log.entries.append(.copied(from: src.path, to: dst.path))
+        }
+        progress.filesDone += 1
+        summary.filesTransferred += 1
+        summary.bytesTransferred += size
+        await report()
+    }
+
+    /// 7.9–7.10: macOS's own image converters (the ones Preview uses). Adding the image FROM
+    /// its source carries the metadata across — date taken, location, orientation.
+    private func convertImage(_ src: URL, to dst: URL, format: ExtractFormat) throws {
+        guard let source = CGImageSourceCreateWithURL(src as CFURL, nil), CGImageSourceGetCount(source) > 0 else {
+            throw EngineError(message: "“\(src.lastPathComponent)” could not be read as an image.")
+        }
+        let type: UTType
+        var options: [CFString: Any] = [:]
+        switch format {
+        case .original: throw EngineError(message: "Nothing to convert.")
+        case let .jpeg(quality):
+            type = .jpeg
+            options[kCGImageDestinationLossyCompressionQuality] = quality
+        case .png: type = .png
+        case .tiff: type = .tiff
+        }
+        guard let destination = CGImageDestinationCreateWithURL(dst as CFURL, type.identifier as CFString, 1, nil) else {
+            throw EngineError(message: "Could not create “\(dst.lastPathComponent)”.")
+        }
+        CGImageDestinationAddImageFromSource(destination, source, 0, options as CFDictionary)
+        guard CGImageDestinationFinalize(destination) else {
+            throw EngineError(message: "“\(src.lastPathComponent)” could not be converted to \(format.label).")
+        }
+    }
+
     // MARK: - Phase 2: do it
 
     private func execute() async throws {
@@ -447,6 +748,9 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
             case let .transfer(src, _, move, _, size):
                 files += 1
                 if !(move && sameVolume(src)) { bytes += move ? size * 2 : size }
+            case let .extract(_, _, move, format, _, size):
+                files += 1
+                bytes += (move && format == .original) ? size * 2 : size
             default:
                 break
             }
@@ -549,7 +853,10 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
     /// makes them — so they are cleared from every folder this run is about to write into.
     private func removeStalePartials() {
         var folders = Set<String>()
-        for op in ops { if case let .transfer(_, dst, _, _, _) = op { folders.insert(dst.deletingLastPathComponent().path) } }
+        for op in ops {
+            if case let .transfer(_, dst, _, _, _) = op { folders.insert(dst.deletingLastPathComponent().path) }
+            if case let .extract(_, dst, _, _, _, _) = op { folders.insert(dst.deletingLastPathComponent().path) }
+        }
         var cleared = 0
         for folder in folders {
             let names = (try? fm.contentsOfDirectory(atPath: folder)) ?? []
@@ -573,7 +880,7 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
         for op in ops {
             let dst: URL
             switch op {
-            case let .transfer(_, d, _, _, _), let .renameMove(_, d): dst = d
+            case let .transfer(_, d, _, _, _), let .renameMove(_, d), let .extract(_, d, _, _, _, _): dst = d
             default: continue
             }
             let key = dst.deletingLastPathComponent().path
@@ -591,7 +898,7 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
     private func enterFolder(for op: Op) -> Bool {
         let dst: URL
         switch op {
-        case let .transfer(_, d, _, _, _), let .renameMove(_, d): dst = d
+        case let .transfer(_, d, _, _, _), let .renameMove(_, d), let .extract(_, d, _, _, _, _): dst = d
         default: return false
         }
         let key = dst.deletingLastPathComponent().path
@@ -639,6 +946,9 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
 
         case let .transfer(src, dst, move, replaceExisting, size):
             try await transfer(src: src, dst: dst, move: move, replaceExisting: replaceExisting, size: size)
+
+        case let .extract(src, dst, move, format, date, size):
+            try await extractFile(src: src, dst: dst, move: move, format: format, date: date, size: size)
 
         case let .removeDuplicate(src, keptAt):
             // "Same size, same date" is strong but it is not proof, and this deletes. Every
@@ -1077,7 +1387,8 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
         guard !failedFolders.isEmpty else { return nil }
         let dst: URL
         switch op {
-        case let .transfer(_, d, _, _, _), let .makeFolder(_, d), let .finishFolder(_, d), let .renameMove(_, d):
+        case let .transfer(_, d, _, _, _), let .makeFolder(_, d), let .finishFolder(_, d), let .renameMove(_, d),
+             let .extract(_, d, _, _, _, _):
             dst = d
         default:
             return nil
@@ -1088,7 +1399,7 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
     private func pathOf(_ op: Op) -> String {
         switch op {
         case let .renameMove(s, _), let .makeFolder(s, _), let .finishFolder(s, _),
-             let .transfer(s, _, _, _, _), let .removeDuplicate(s, _):
+             let .transfer(s, _, _, _, _), let .removeDuplicate(s, _), let .extract(s, _, _, _, _, _):
             return s.path
         case let .dispose(u), let .discardSourceDSStore(u), let .removeSourceFolderIfEmpty(u):
             return u.path
