@@ -274,3 +274,11 @@ a folder. **Copy = the library container is preserved. Move = the container is e
   re-created with the same size and date had matched its old record and been called identical unread.
 - Self-test: ALL PASSED twice each on Raid_4x4 and Cold Storage (SMB); UI harness drew every new popup.
 - Still open (his call): 4.10 — Space stays play/pause; the bar is clicked to grow the player.
+
+## ✅ BUILT 2026-09-18 — build 61: time left he can believe
+His report on 60: *"it fluctuates days 1 hour 50 minutes to 22 minutes"* (and 357 h shown on a ~2 h job).
+- Data speed is learned only from LARGE reads (≥ 1 MiB); tiny files' time is per-file overhead.
+- No large read timed yet → "estimating time left…" instead of a guess.
+- Shown figure re-computed at most every 5 s, counted down by elapsed time, eased 25% toward each reading.
+- Rounded: "about 1 h 50 m left" (5-min steps past an hour), whole minutes under, "under a minute left".
+- Self-test on Cold Storage: 159 s job, estimates 324 → 319 → … → 50, never a >3× jump.

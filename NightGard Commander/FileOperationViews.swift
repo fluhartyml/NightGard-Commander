@@ -703,11 +703,23 @@ struct FileOperationProgressBar: View {
         var parts = ["\(Fmt.size(p.bytesDone)) of \(Fmt.size(p.bytesTotal))"]
         if controller.runningKind == .move && !controller.isUndo { parts[0] += " (includes reading each copy back to verify it)" }
         if p.bytesPerSecond > 0 { parts.append("\(Fmt.size(Int64(p.bytesPerSecond)))/s") }
-        if let s = p.secondsLeft {
+        if let raw = p.secondsLeft {
+            // Rounded, so it reads as the estimate it is: 5-minute steps past an hour,
+            // whole minutes under an hour, "under a minute" at the end.
             let f = DateComponentsFormatter()
-            f.allowedUnits = s >= 3600 ? [.hour, .minute] : [.minute, .second]
             f.unitsStyle = .abbreviated
-            parts.append("\(f.string(from: s) ?? "") left")
+            if raw >= 3600 {
+                f.allowedUnits = [.day, .hour, .minute]
+                parts.append("about \(f.string(from: (raw / 300).rounded() * 300) ?? "") left")
+            } else if raw >= 60 {
+                f.allowedUnits = [.minute]
+                parts.append("about \(f.string(from: (raw / 60).rounded() * 60) ?? "") left")
+            } else {
+                parts.append("under a minute left")
+            }
+        } else if p.filesDone > 0 && p.filesDone < p.filesTotal {
+            // No large file timed yet — a guess here was 357 hours for a two-hour job.
+            parts.append("estimating time left…")
         }
         return parts.joined(separator: " · ")
     }

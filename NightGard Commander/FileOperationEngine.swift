@@ -1187,8 +1187,7 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
                 if w < 0 { if errno == EINTR { continue }; throw posixError("Could not write to the target", dst) }
                 written += w
             }
-            dataSeconds += Date().timeIntervalSince(started)
-            dataBytes += Int64(n)
+            noteDataTime(n, since: started)
             addBytes(Int64(n))
             await report()
         }
@@ -1213,8 +1212,7 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
             if n < 0 { if errno == EINTR { continue }; throw posixError("Could not read back the copy", url) }
             if n == 0 { break }
             hasher.update(bufferPointer: UnsafeRawBufferPointer(start: buffer, count: n))
-            dataSeconds += Date().timeIntervalSince(started)
-            dataBytes += Int64(n)
+            noteDataTime(n, since: started)
             addBytes(Int64(n))
             await report()
         }
@@ -1289,8 +1287,23 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
     // every file's fixed cost as if it were data and said 174,121 hours; the measured truth
     // was about four files a second. Here the time spent actually moving data is timed on its
     // own, the rest is per-file overhead, and each is applied to what is left of its kind.
+    //
+    // ⚠️ SECOND FAULT, 2026-09-18 (build 60 → 61). Timing EVERY read as "data" still charged
+    // the per-file round trip to the data rate: a 3 KB journal file's single read takes as
+    // long as its open and fsync, so on the 9,209 tiny files at the top of a Photos library
+    // the data rate came out at 459 bytes/s and the estimate said 357 hours for a job of
+    // about two. Now only LARGE reads (≥ 1 MiB) teach the data rate; small files' time is
+    // per-file overhead, which is what it is. Until a large read has been timed there is no
+    // honest data rate, so the estimate is withheld ("estimating time left…").
     private var dataSeconds: Double = 0
     private var dataBytes: Int64 = 0
+    private static let largeRead = 1 << 20
+
+    private func noteDataTime(_ n: Int, since started: Date) {
+        guard n >= Self.largeRead else { return }
+        dataSeconds += Date().timeIntervalSince(started)
+        dataBytes += Int64(n)
+    }
 
     private func estimate() -> Double? {
         guard progress.phase == .transferring, let since = runningSince else { return nil }
@@ -1300,20 +1313,40 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
         let bytesLeft = Double(max(0, progress.bytesTotal - progress.bytesDone))
         let perFile = max(0, elapsed - dataSeconds) / Double(progress.filesDone)
         var seconds = perFile * filesLeft
-        if bytesLeft > 0 {
-            // No data measured yet (all renames or clones so far): fall back to the overall rate.
-            let rate = dataSeconds > 0.5 ? Double(dataBytes) / dataSeconds : progress.bytesPerSecond
-            guard rate > 1 else { return nil }
-            seconds += bytesLeft / rate
+        if bytesLeft > Double(Self.largeRead) * Double(max(1, Int(filesLeft))) {
+            // Real data still to come — needs a measured rate from large reads.
+            guard dataSeconds > 0.2 else { return nil }
+            seconds += bytesLeft / (Double(dataBytes) / dataSeconds)
         }
         return seconds
+    }
+
+    // His report on build 60: *"it fluctuates days 1 hour 50 minutes to 22 minutes."* A raw
+    // estimate jumps whenever the mix of files changes. What he sees is steadied: a new reading
+    // is re-computed at most every 5 seconds and moves the shown figure only a quarter of the
+    // way toward it, so one odd stretch of files cannot swing it from days to minutes.
+    private var shownEstimate: Double?
+    private var lastEstimateAt = Date.distantPast
+
+    private func steadiedEstimate(_ now: Date) -> Double? {
+        guard now.timeIntervalSince(lastEstimateAt) >= 5 || shownEstimate == nil else { return shownEstimate }
+        let sinceLast = lastEstimateAt == .distantPast ? 0 : now.timeIntervalSince(lastEstimateAt)
+        lastEstimateAt = now
+        guard let raw = estimate() else { return shownEstimate }
+        if let shown = shownEstimate {
+            // Count the shown figure down by the time that passed, then ease toward the new reading.
+            shownEstimate = max(0, 0.75 * max(0, shown - sinceLast) + 0.25 * raw)
+        } else {
+            shownEstimate = raw
+        }
+        return shownEstimate
     }
 
     private func report(force: Bool = false) async {
         let now = Date()
         guard force || now.timeIntervalSince(lastReport) > 0.2 else { return }
         lastReport = now
-        progress.secondsLeft = estimate()
+        progress.secondsLeft = steadiedEstimate(now)
         let snapshot = progress
         await delegate.report(snapshot)
     }
