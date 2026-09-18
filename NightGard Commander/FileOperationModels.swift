@@ -64,9 +64,11 @@ nonisolated struct ReplaceConfirm: Sendable {
 nonisolated struct FileQuestion: Sendable {
     enum Sameness: Sendable {
         case differs
-        /// Same size and same date — contents NOT read. Say only what was checked.
+        /// Not used for new questions any more — every same-size pair is compared byte for
+        /// byte (see FileOperationEngine.compare). Kept so the popup can still say exactly
+        /// what was checked if a cheaper test is ever reintroduced.
         case sameSizeAndDate
-        /// Same size, different date, and every byte compared equal.
+        /// Same size and every byte compared equal.
         case sameContents
     }
 
@@ -149,6 +151,7 @@ nonisolated struct FileOpSummary: Sendable {
     var notes: [Item] = []
     var logURL: URL?
     var canUndo = false
+    var wasUndo = false
 }
 
 /// One line of the operation log. Written to disk so a whole Move can be undone later —

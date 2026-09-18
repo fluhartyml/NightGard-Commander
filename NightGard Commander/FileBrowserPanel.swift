@@ -94,6 +94,8 @@ struct FileBrowserPanel: View {
     @State private var showNuclearToast = false
     @State private var nuclearToastMessage = ""
     @State private var lastMovedFile: (source: String, destination: String, fileName: String)? = nil
+    /// Copy and Move through the engine — questions, progress, summary.
+    @Environment(FileOperationController.self) private var fileOps: FileOperationController?
 
     let playlistManager: PlaylistManager?
 
@@ -597,10 +599,10 @@ struct FileBrowserPanel: View {
                             }
                             Divider()
                             Button("Copy to Other Pane") {
-                                copyToOtherPane(item: item)
+                                runFileOperation(.copy, [item])
                             }
                             Button("Move to Other Pane") {
-                                moveToOtherPane(item: item)
+                                runFileOperation(.move, [item])
                             }
                             Divider()
                             Button("Delete") {
@@ -1806,63 +1808,43 @@ struct FileBrowserPanel: View {
     }
 
     private func copySelectedToOtherPane() {
-        let itemsToCopy = fileSystem.files.filter { selectedItems.contains($0.id) }
-        for item in itemsToCopy {
-            copyToOtherPane(item: item)
-        }
-        selectedItems.removeAll()
+        runFileOperation(.copy, fileSystem.files.filter { selectedItems.contains($0.id) })
     }
 
     private func moveSelectedToOtherPane() {
-        let itemsToMove = fileSystem.files.filter { selectedItems.contains($0.id) }
+        runFileOperation(.move, fileSystem.files.filter { selectedItems.contains($0.id) })
+    }
 
-        // DJ CURATION: Check if we're moving the currently playing file
-        var wasPlayingMovedFile = false
+    /// Copy or move to the other pane through FileOperationEngine: every clash is asked
+    /// about before anything is touched, a move verifies each copy before deleting, and a
+    /// summary says what happened. (Nuclear mode and the M key keep their own fast path.)
+    private func runFileOperation(_ kind: FileOpKind, _ items: [FileItem]) {
+        guard let fileOps, !items.isEmpty else { return }
+
+        // DJ CURATION: moving the playing track stops it; the next one plays afterwards,
+        // but only if it really left (it may have been skipped).
+        var movedPlaying: FileItem? = nil
         var nextTrackName: String? = nil
+        if kind == .move, let media = currentMedia, items.contains(where: { $0.path == media.path }) {
+            movedPlaying = media
+            let mediaFiles = fileSystem.files.filter { isMediaFile($0) }
+            if let i = mediaFiles.firstIndex(where: { $0.path == media.path }), i + 1 < mediaFiles.count {
+                nextTrackName = mediaFiles[i + 1].name
+            }
+            currentMedia = nil
+            showMediaPlayer = false
+        }
 
-        for item in itemsToMove {
-            if let media = currentMedia, media.path == item.path {
-                wasPlayingMovedFile = true
-
-                // Before moving, capture what the next track should be
-                let mediaFiles = fileSystem.files.filter { isMediaFile($0) }
-                if let currentIndex = mediaFiles.firstIndex(where: { $0.path == item.path }) {
-                    let nextIndex = currentIndex + 1
-                    if nextIndex < mediaFiles.count {
-                        nextTrackName = mediaFiles[nextIndex].name
-                    }
+        fileOps.start(kind,
+                      sources: items.map { URL(fileURLWithPath: $0.path) },
+                      target: URL(fileURLWithPath: otherPanePath)) { _ in
+            selectedItems.removeAll()
+            fileSystem.loadFiles()
+            onRefreshOtherPane()
+            if let played = movedPlaying, !FileManager.default.fileExists(atPath: played.path) {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    playNextTrack(preferredTrackName: nextTrackName)
                 }
-
-                // Stop playback before moving
-                currentMedia = nil
-                showMediaPlayer = false
-                break
-            }
-        }
-
-        // Move all files
-        for item in itemsToMove {
-            // Move without auto-play (we'll handle it once at the end)
-            let fileManager = FileManager.default
-            let sourceURL = URL(fileURLWithPath: item.path)
-            let fileName = sourceURL.lastPathComponent
-            let destURL = URL(fileURLWithPath: otherPanePath).appendingPathComponent(fileName)
-
-            do {
-                try fileManager.moveItem(at: sourceURL, to: destURL)
-            } catch {
-                print("Error moving file: \(error)")
-            }
-        }
-
-        selectedItems.removeAll()
-        fileSystem.loadFiles()
-        onRefreshOtherPane()
-
-        // Auto-play next track after moving if we moved the playing file
-        if wasPlayingMovedFile {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                playNextTrack(preferredTrackName: nextTrackName)
             }
         }
     }

@@ -46,6 +46,13 @@ struct NightGard_CommanderApp: App {
                 }
             }
 
+            // A whole Move can be undone later from its log — the old undo covered one file.
+            CommandGroup(after: .undoRedo) {
+                Button("Undo Last Move…") {
+                    NotificationCenter.default.post(name: .undoLastMove, object: nil)
+                }
+            }
+
             CommandGroup(after: .windowArrangement) {
                 OpenLibraryWindowButton()
             }
@@ -93,17 +100,33 @@ private struct OpenLibraryWindowButton: View {
 /// so the commit, branch and build time land somewhere they can be read out loud.
 @MainActor
 private func showAboutPanel() {
-    let credits = NSAttributedString(
+    let credits = NSMutableAttributedString(
         string: BuildStamp.summary,
         attributes: [
             .font: NSFont.monospacedSystemFont(ofSize: 11, weight: .regular),
             .foregroundColor: NSColor.secondaryLabelColor
         ]
     )
+    // ACKNOWLEDGMENTS — his standing rule for every app, in About AND the README
+    // (2026-09-18): name the outside work, and say plainly that his copyright does not
+    // claim it.
+    credits.append(NSAttributedString(
+        string: "\n\nAcknowledgments\n"
+            + "Copy and Move follow the approach of GNU Midnight Commander "
+            + "(GPL v3 or later, midnight-commander.org) — its ideas, rewritten in Swift; "
+            + "no Midnight Commander code is included.\n\n"
+            + "Copyright covers Michael Fluharty's original work only. It does not claim or "
+            + "intend ownership of the work of the original developers named here.",
+        attributes: [
+            .font: NSFont.systemFont(ofSize: 11),
+            .foregroundColor: NSColor.secondaryLabelColor
+        ]
+    ))
     NSApp.orderFrontStandardAboutPanel(options: [.credits: credits])
     NSApp.activate(ignoringOtherApps: true)
 }
 
 extension Notification.Name {
     static let openShazamSettings = Notification.Name("openShazamSettings")
+    static let undoLastMove = Notification.Name("undoLastMove")
 }

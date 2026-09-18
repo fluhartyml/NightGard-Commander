@@ -43,6 +43,8 @@ struct ContentView: View {
     @State private var leftPreviewItem: FileItem?
     @State private var rightPreviewItem: FileItem?
     @State private var showShazamSettings = false
+    /// Copy and Move — questions, progress, summary. One operation at a time.
+    @State private var fileOps = FileOperationController()
 
     init() {
         // Initialize FileSystemServices with saved paths
@@ -493,6 +495,12 @@ struct ContentView: View {
 
             Divider()
 
+            // A copy or move in progress. Browsing carries on underneath it.
+            if fileOps.isRunning {
+                FileOperationProgressBar(controller: fileOps)
+                Divider()
+            }
+
             // Command button bar (MC/NC style)
             HStack(spacing: 0) {
                 CommandButton(label: "View", shortcut: "⌘3") {
@@ -512,14 +520,14 @@ struct ContentView: View {
                 CommandButton(label: "Copy", shortcut: "⌘5") {
                     copyToOtherPane()
                 }
-                .disabled(activeSelectedItem == nil)
+                .disabled(activeSelectedItem == nil || fileOps.isRunning)
                 .keyboardShortcut("5", modifiers: .command)
                 .help(copyTooltip)
 
                 CommandButton(label: "Move", shortcut: "⌘6") {
                     moveToOtherPane()
                 }
-                .disabled(activeSelectedItem == nil)
+                .disabled(activeSelectedItem == nil || fileOps.isRunning)
                 .keyboardShortcut("6", modifiers: .command)
                 .help(moveTooltip)
 
@@ -561,6 +569,23 @@ struct ContentView: View {
                     .hidden()
             }
         )
+        .environment(fileOps)
+        .sheet(item: $fileOps.presented, onDismiss: { fileOps.sheetDismissed() }) { presented in
+            FileOperationSheet(presented: presented, controller: fileOps)
+        }
+        .onAppear {
+            fileOps.onDiskChanged = {
+                leftFileSystem.loadFiles()
+                rightFileSystem.loadFiles()
+            }
+            fileOps.onReveal = { folder in
+                if focusedPane == .left { leftFileSystem.navigateToFolder(folder.path) }
+                else { rightFileSystem.navigateToFolder(folder.path) }
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .undoLastMove)) { _ in
+            fileOps.offerUndoLastMove()
+        }
         .sheet(isPresented: $showTextEditor) {
             if let item = previewItem {
                 TextFileEditor(
@@ -821,93 +846,67 @@ struct ContentView: View {
         }
     }
 
+    /// Copy the selection from the focused pane (source) to the other pane (target).
+    /// Every clash is asked about first — see FileOperationEngine.swift.
     private func copyToOtherPane() {
         let selectedIDs = focusedPane == .left ? selectedLeftItems : selectedRightItems
         let sourceFiles = activeFocusedFileSystem.files.filter { selectedIDs.contains($0.id) }
         guard !sourceFiles.isEmpty else { return }
+        let targetPath = focusedPane == .left ? rightFileSystem.currentPath : leftFileSystem.currentPath
 
-        let destinationPath = focusedPane == .left ? rightFileSystem.currentPath : leftFileSystem.currentPath
-
-        for item in sourceFiles {
-            do {
-                let sourceURL = URL(fileURLWithPath: item.path)
-                let fileName = sourceURL.lastPathComponent
-                let destURL = URL(fileURLWithPath: destinationPath).appendingPathComponent(fileName)
-                try FileManager.default.copyItem(at: sourceURL, to: destURL)
-            } catch {
-                print("Error copying \(item.name) to other pane: \(error.localizedDescription)")
-            }
-        }
-
-        // Reload both panes
-        leftFileSystem.loadFiles()
-        rightFileSystem.loadFiles()
+        fileOps.start(.copy,
+                      sources: sourceFiles.map { URL(fileURLWithPath: $0.path) },
+                      target: URL(fileURLWithPath: targetPath))
     }
 
+    /// Move the selection from the focused pane (source) to the other pane (target).
+    ///
+    /// ⚠️ Until build 55 this called `moveItem` per file on the main thread: a same-named
+    /// item in the target failed with a console print, and a big move froze the window.
     private func moveToOtherPane() {
-        let selectedIDs = focusedPane == .left ? selectedLeftItems : selectedRightItems
+        let pane = focusedPane
+        let selectedIDs = pane == .left ? selectedLeftItems : selectedRightItems
         let sourceFiles = activeFocusedFileSystem.files.filter { selectedIDs.contains($0.id) }
         guard !sourceFiles.isEmpty else { return }
+        let targetPath = pane == .left ? rightFileSystem.currentPath : leftFileSystem.currentPath
 
-        let destinationPath = focusedPane == .left ? rightFileSystem.currentPath : leftFileSystem.currentPath
-
-        // DJ CURATION: Check if we're moving the currently playing file
-        let currentMedia = focusedPane == .left ? leftCurrentMedia : rightCurrentMedia
-        var wasPlayingMovedFile = false
+        // DJ CURATION: moving the track that is playing stops it, and the next one plays
+        // once the move is done — but only if it really left (it may have been skipped).
+        let currentMedia = pane == .left ? leftCurrentMedia : rightCurrentMedia
+        var movedPlaying: FileItem? = nil
         var nextTrackName: String? = nil
-
-        for item in sourceFiles {
-            // Check if this item is currently playing
-            if let media = currentMedia, media.path == item.path {
-                wasPlayingMovedFile = true
-
-                // Before moving, capture what the next track should be
-                let mediaFiles = activeFocusedFileSystem.files.filter { file in
-                    let type = getFileType(for: file)
-                    return type == .audio || type == .video
-                }
-                if let currentIndex = mediaFiles.firstIndex(where: { $0.path == item.path }) {
-                    let nextIndex = currentIndex + 1
-                    if nextIndex < mediaFiles.count {
-                        nextTrackName = mediaFiles[nextIndex].name
-                    }
-                }
-
-                // Stop playback before moving
-                if focusedPane == .left {
-                    leftCurrentMedia = nil
-                    showLeftMediaPlayer = false
-                } else {
-                    rightCurrentMedia = nil
-                    showRightMediaPlayer = false
-                }
+        if let media = currentMedia, sourceFiles.contains(where: { $0.path == media.path }) {
+            movedPlaying = media
+            let mediaFiles = activeFocusedFileSystem.files.filter { file in
+                let type = getFileType(for: file)
+                return type == .audio || type == .video
             }
-
-            do {
-                let sourceURL = URL(fileURLWithPath: item.path)
-                let fileName = sourceURL.lastPathComponent
-                let destURL = URL(fileURLWithPath: destinationPath).appendingPathComponent(fileName)
-                try FileManager.default.moveItem(at: sourceURL, to: destURL)
-            } catch {
-                print("Error moving \(item.name) to other pane: \(error.localizedDescription)")
+            if let i = mediaFiles.firstIndex(where: { $0.path == media.path }), i + 1 < mediaFiles.count {
+                nextTrackName = mediaFiles[i + 1].name
+            }
+            if pane == .left {
+                leftCurrentMedia = nil
+                showLeftMediaPlayer = false
+            } else {
+                rightCurrentMedia = nil
+                showRightMediaPlayer = false
             }
         }
 
-        // Clear selection and reload both panes
-        if focusedPane == .left {
-            selectedLeftItem = nil
-            selectedLeftItems.removeAll()
-        } else {
-            selectedRightItem = nil
-            selectedRightItems.removeAll()
-        }
-        leftFileSystem.loadFiles()
-        rightFileSystem.loadFiles()
-
-        // DJ CURATION: Auto-play next track after move
-        if wasPlayingMovedFile {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                playNextTrackInFocusedPane(preferredTrackName: nextTrackName)
+        fileOps.start(.move,
+                      sources: sourceFiles.map { URL(fileURLWithPath: $0.path) },
+                      target: URL(fileURLWithPath: targetPath)) { _ in
+            if pane == .left {
+                selectedLeftItem = nil
+                selectedLeftItems.removeAll()
+            } else {
+                selectedRightItem = nil
+                selectedRightItems.removeAll()
+            }
+            if let played = movedPlaying, !FileManager.default.fileExists(atPath: played.path) {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    playNextTrackInFocusedPane(preferredTrackName: nextTrackName)
+                }
             }
         }
     }

@@ -233,9 +233,13 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
         }
     }
 
-    /// Identical? Same size + same date is reported as exactly that. Same size with a
-    /// different date is settled by comparing every byte — his rule: "you have to do a
-    /// forensic byte per byte comparison inside the media file if in doubt."
+    /// Identical means identical: whenever two files are the same size, every byte is
+    /// compared. His rule: "you have to do a forensic byte per byte comparison inside the
+    /// media file if in doubt."
+    ///
+    /// ⚠️ The first version called same size + same date "identical" without reading them.
+    /// The UI self-test caught two DIFFERENT 1-byte files, written in the same second,
+    /// being presented as "these two files look identical". Honest wording, wrong question.
     private func compare(_ s: FileFacts, _ t: FileFacts) async throws -> FileQuestion.Sameness {
         if s.isSymlink && t.isSymlink {
             let a = try? fm.destinationOfSymbolicLink(atPath: s.url.path)
@@ -243,9 +247,6 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
             return (a != nil && a == b) ? .sameContents : .differs
         }
         guard s.size == t.size else { return .differs }
-        if let a = s.modified, let b = t.modified, abs(a.timeIntervalSince(b)) < 1 {
-            return .sameSizeAndDate
-        }
         return try await bytesEqual(s.url, t.url) ? .sameContents : .differs
     }
 
@@ -625,6 +626,7 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
 
     private func runUndo() async -> FileOpSummary {
         guard var undone = undoLog else { return summary }
+        summary.wasUndo = true
         progress.phase = .transferring
         runningSince = Date()
         let entries = undone.entries.reversed()

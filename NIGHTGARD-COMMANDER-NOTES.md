@@ -203,3 +203,15 @@ written 07:25 09-18) of the source's complete one (32,808 files / 6.2 GB).
 5. **His idea: port Midnight Commander's code** — *"if you copy midnight commanders code and merge
    with NG commander most issues will fix themselves."* MC is GPL v3+ (compatible with his GPL);
    it is **C** (ncurses/GLib), Commander is **Swift/SwiftUI**. See the discussion before deciding.
+
+### ✅ BUILT on `file-ops` (2026-09-18) — plan sections 1–3 and 5
+- `FileOperationEngine.swift` / `Models` / `Controller` / `Views`; MoveGuard = live libraries only.
+- Wired: command bar Copy ⌘5 / Move ⌘6, hidden ⌘C / ⌘X, right-click Copy/Move (one or many).
+  **Edit › Undo Last Move…** reads the newest move log (`~/Library/Application Support/NightGard
+  Commander/Operations/`).
+- ⚠️ **NOT routed through the engine, on purpose:** the **M key** and **nuclear mode** keep their
+  own single-file DJ-curation move (`moveToOtherPane(item:)`), which already asks on a duplicate.
+  Route them through the engine only if he asks.
+- Self-tested headless on the internal drive, Raid_4x4 (HFS+) and Cold Storage (SMB); the
+  popups were rendered and read. **He has not run it yet.**
+- ⬜ Plan section 4 (preview area + minimizable player) — next.
