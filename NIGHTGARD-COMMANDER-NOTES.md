@@ -151,3 +151,55 @@ Written down so the gap is visible rather than rediscovered.
 1. **Copy/Move with flatten** — the consolidation itself. Interface only.
 2. **Cold identification** — no verb, because no code path does it in this app.
 3. **Collision comparison** — nothing anywhere compares two colliding files; it only suffixes.
+
+---
+
+## ⬜ PLANNED — Nuclear Mode: left-handed toggle (his, 2026-09-16 22:3x). NOT BUILT.
+
+**How Nuclear Mode is laid out today, in his words:** *"its set up to sort from th right window with
+multiple files to the left with multple folder pigeon holes."* The RIGHT pane holds the files being
+sorted; the LEFT pane holds the destination folders ("pigeon holes"). → moves the current file across
+and plays the next, ↓ next, ↑ previous, ← undoes the last move (`FileBrowserPanel.swift`, the
+compass rose around the nuclear glyph).
+
+**The ask:** *"we will need to add a left handed toggle to inverse."* A toggle that mirrors it —
+files on the LEFT, pigeon holes on the RIGHT — with the arrow meanings flipped to match
+(← moves + plays next, → undoes).
+
+⬜ Open, ask him before building: where the toggle lives (Settings, the compass rose, or both), and
+whether it also needs a CLI verb — the rule at the top of this file says anything the interface can
+do gets one, stored in the same `UserDefaults`.
+
+---
+
+## 🔀 MOVE / COPY COLLISIONS — his spec, 2026-09-18 07:3x–07:5x. NOT BUILT YET.
+
+**Found first:** multi-select Move (⌘6) exists, but `moveSelectedToOtherPane()` calls
+`moveItem` straight at the destination — a same-named folder there makes it **throw and print to
+the console only. Nothing moves, nothing tells him.** Copy (⌘5) silently suffixes instead.
+
+**Terms — SIDE-AGNOSTIC, his rule: *"DO NOT USE LEFT OR RIGHT."*** The **source** tab holds what is
+moving; the **target** tab receives it.
+
+**His framing:** *"on move it is destructive so rules are needed because copy isnt AS destructive."*
+Model is DOS / Finder.
+
+1. **Folder collision** — source `Parent` onto a target that already has `Parent` → popup:
+   **are you sure?** then **Merge** or **Replace**.
+   - **Replace** = the target's `Parent` and its whole tree are removed and the source's `Parent`
+     takes its place (Finder's Replace behaves this way).
+   - **Merge** = combine the two, and **ask the same question again for every same-named
+     sub-folder**, all the way down.
+2. **File collision** inside a merge → popup: **Replace** · **Skip** · **Keep Both**
+   (Keep Both adds a number to the incoming one — *"keeping both adds a number"*).
+3. **"Apply to all"** checkbox on the popups — *"yes add apply to all."*
+
+⬜ **Unasked:** whether Apply to all on the folder popup is wanted too (assumed yes, confirm).
+⬜ **First real use:** five folders from `Raid_4x4/Backup` to `Cold Storage 12TB/backups`. The
+target's `2025 OCT 19 Photo Library` is a **partial copy** (750 files / 191 KB, database folder only,
+written 07:25 09-18) of the source's complete one (32,808 files / 6.2 GB).
+4. **Multiple source folders at once** — *"i also want to be able to select multiple originating
+   folders"* (09-18). Each selected folder runs through the same collision rules.
+5. **His idea: port Midnight Commander's code** — *"if you copy midnight commanders code and merge
+   with NG commander most issues will fix themselves."* MC is GPL v3+ (compatible with his GPL);
+   it is **C** (ncurses/GLib), Commander is **Swift/SwiftUI**. See the discussion before deciding.
