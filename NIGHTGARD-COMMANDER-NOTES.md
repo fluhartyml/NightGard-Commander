@@ -214,4 +214,11 @@ written 07:25 09-18) of the source's complete one (32,808 files / 6.2 GB).
   Route them through the engine only if he asks.
 - Self-tested headless on the internal drive, Raid_4x4 (HFS+) and Cold Storage (SMB); the
   popups were rendered and read. **He has not run it yet.**
-- ⬜ Plan section 4 (preview area + minimizable player) — next.
+- ✅ **Plan section 4 BUILT (build 58):** preview button in each pane's header (remembered per pane);
+  `PanePreview.swift` — poster art → frame a few seconds in → album art → Quick Look; folders show
+  count, size (capped at 4 s: "at least this") and thumbnails. Player minimizes to a bar under the
+  preview and maximizes over it; video opens big, audio opens as the bar; Escape shrinks it.
+  ⚠️ **One change from plan 4.10:** Space was NOT made "maximize" — Space already means play/pause
+  in the pane, and taking it over would break that. Click the bar or its ⤢ button instead. Ask him.
+  ⚠️ The video still is verified to be the right frame at the right size; how it LOOKS in the real
+  window is unverified — the test snapshots could not draw large images reliably.

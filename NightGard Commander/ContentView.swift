@@ -45,6 +45,9 @@ struct ContentView: View {
     @State private var showShazamSettings = false
     /// Copy and Move — questions, progress, summary. One operation at a time.
     @State private var fileOps = FileOperationController()
+    /// Preview area per pane, remembered between launches.
+    @AppStorage("previewShownLeftPane") private var previewLeft = false
+    @AppStorage("previewShownRightPane") private var previewRight = false
 
     init() {
         // Initialize FileSystemServices with saved paths
@@ -406,7 +409,8 @@ struct ContentView: View {
                         },
                         selectedItems: $selectedLeftItems,
                         showShazamSettings: $showShazamSettings,
-                        playlistManager: leftPlaylistManager
+                        playlistManager: leftPlaylistManager,
+                        showPreview: $previewLeft
                     )
                 }
 
@@ -488,7 +492,8 @@ struct ContentView: View {
                         },
                         selectedItems: $selectedRightItems,
                         showShazamSettings: $showShazamSettings,
-                        playlistManager: rightPlaylistManager
+                        playlistManager: rightPlaylistManager,
+                        showPreview: $previewRight
                     )
                 }
             }

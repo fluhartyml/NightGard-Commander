@@ -21,6 +21,11 @@ struct InPaneMediaPlayer: View {
     let fileSystem: FileSystemService
     let onSwitchToOpposite: () -> Void
     var getOppositeFirstMediaURL: (() -> URL?)? = nil  // For crossfade to opposite pane
+    /// Minimized = a two-line bar under the pane's preview; maximized = the player takes
+    /// the preview's place. His design, 2026-09-18: "the media player … can be a line or
+    /// two under the preview and if the media player is brought into focus or maximized it
+    /// takes over the preview because the media player is the preview."
+    var isMinimized: Binding<Bool> = .constant(false)
 
     @State private var player: AVPlayer?
     @State private var currentTime: Double = 0
@@ -55,6 +60,11 @@ struct InPaneMediaPlayer: View {
     /// Same, for a file the player cannot decode at all.
     @State private var failedToPlayObserver: NSObjectProtocol?
 
+    /// Set when the video is shown again after being minimized, so reappearing does not
+    /// restart a video he had paused.
+    @State private var videoReturningFromMinimized = false
+    @State private var lastMediaWasVideo = false
+
     var mediaFiles: [FileItem] {
         fileSystem.files.filter { file in
             let ext = (file.name as NSString).pathExtension.lowercased()
@@ -81,7 +91,29 @@ struct InPaneMediaPlayer: View {
             VStack(spacing: 0) {
                 Divider()
 
-                if isWebloc {
+                if isMinimized.wrappedValue {
+                    // MINIMIZED: one line — what is playing, where it is, and the way back up.
+                    HStack(spacing: 8) {
+                        Image(systemName: isVideo ? "film" : "music.note")
+                            .foregroundStyle(.secondary)
+                        Text(ShazamScannedDatabase.shared.getMetadata(for: media.path)?.title ?? media.name)
+                            .font(.caption).lineLimit(1).truncationMode(.middle)
+                        Spacer()
+                        if !isWebloc {
+                            Text("\(formatTime(currentTime)) / \(formatTime(duration))")
+                                .font(.caption2).foregroundStyle(.secondary).monospacedDigit()
+                        }
+                        Button { maximize() } label: {
+                            Image(systemName: "arrow.up.left.and.arrow.down.right")
+                        }
+                        .buttonStyle(.borderless)
+                        .help("Maximize the player — it takes the preview's place")
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.top, 4)
+                    .contentShape(Rectangle())
+                    .onTapGesture { maximize() }
+                } else if isWebloc {
                     // Apple Music native player
                     AppleMusicPlayerView()
                         .frame(maxWidth: .infinity)
@@ -93,8 +125,14 @@ struct InPaneMediaPlayer: View {
                             .frame(maxWidth: .infinity)
                             .aspectRatio(16/9, contentMode: .fit)
                             .onAppear {
-                                player.play()
-                                isCurrentlyPlaying = true
+                                // Coming back from minimized keeps whatever state it was
+                                // in — a paused video stays paused.
+                                if videoReturningFromMinimized {
+                                    videoReturningFromMinimized = false
+                                } else {
+                                    player.play()
+                                    isCurrentlyPlaying = true
+                                }
                             }
                     }
                 } else {
@@ -221,7 +259,8 @@ struct InPaneMediaPlayer: View {
                     }
                     .padding(.vertical, 8)
                 } else {
-                    // Progress slider (for local media files only)
+                    // Progress slider (for local media files only) — hidden when minimized
+                    if !isMinimized.wrappedValue {
                     HStack(spacing: 8) {
                         Text(formatTime(currentTime))
                             .font(.caption2)
@@ -246,6 +285,7 @@ struct InPaneMediaPlayer: View {
                     }
                     .padding(.horizontal, 8)
                     .padding(.top, 4)
+                    }
 
                     // Playback controls (for local media files only)
                     HStack(spacing: 12) {
@@ -289,10 +329,19 @@ struct InPaneMediaPlayer: View {
 
                         // Fullscreen visualizer for TV/AirPlay display
                         FullscreenVisualizerButton()
+
+                        if !isMinimized.wrappedValue {
+                            Button { minimize() } label: {
+                                Image(systemName: "arrow.down.right.and.arrow.up.left")
+                            }
+                            .buttonStyle(.borderless)
+                            .help("Minimize the player to a bar under the preview — it keeps playing")
+                        }
                     }
                     .padding(.vertical, 4)
                 }
 
+                if !isMinimized.wrappedValue {
                 // Auto-play toggles
                 HStack(spacing: 12) {
                     Toggle(isOn: $autoPlayNext) {
@@ -340,12 +389,30 @@ struct InPaneMediaPlayer: View {
                 MetadataFooterView(filePath: media.path, fileName: media.name)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 6)
+                }
             }
             .background(Color.secondary.opacity(0.05))
+            // Escape shrinks a maximized player back to the bar; playback carries on.
+            .onExitCommand {
+                if !isMinimized.wrappedValue { minimize() }
+            }
             .onAppear {
+                // A video opens big (it is only useful when you can see it); audio opens
+                // as the bar so browsing carries on. His rule 4.10.
+                isMinimized.wrappedValue = !isVideo
+                lastMediaWasVideo = isVideo
                 setupPlayer()
             }
             .onChange(of: currentMedia) {
+                // Size follows the KIND only when it changes: a video grows, and the first
+                // audio track after a video shrinks. An audio player he maximized stays
+                // maximized as tracks advance.
+                if isVideo {
+                    isMinimized.wrappedValue = false
+                } else if lastMediaWasVideo {
+                    isMinimized.wrappedValue = true
+                }
+                lastMediaWasVideo = isVideo
                 setupPlayer()
             }
             .onReceive(timer) { _ in
@@ -360,6 +427,15 @@ struct InPaneMediaPlayer: View {
                 Text("Please allow access to Apple Music in System Settings to play Apple Music content.")
             }
         }
+    }
+
+    private func minimize() {
+        isMinimized.wrappedValue = true
+    }
+
+    private func maximize() {
+        if isVideo { videoReturningFromMinimized = true }
+        isMinimized.wrappedValue = false
     }
 
     private func setupPlayer() {

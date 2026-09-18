@@ -98,6 +98,11 @@ struct FileBrowserPanel: View {
     @Environment(FileOperationController.self) private var fileOps: FileOperationController?
 
     let playlistManager: PlaylistManager?
+    /// The preview area in the lower part of the pane — his idea, 2026-09-18. Per pane,
+    /// remembered by ContentView.
+    var showPreview: Binding<Bool> = .constant(false)
+    /// The player as a bar under the preview (true) or taking the preview's place (false).
+    @State private var playerMinimized = true
 
     // Filter files to show only playlists if enabled
     private var displayedFiles: [FileItem] {
@@ -311,6 +316,14 @@ struct FileBrowserPanel: View {
                 }
                 .help("Click to iTunes lookup selected file | Right-click for folder scan")
 
+                // Preview area on/off for this pane.
+                Button {
+                    showPreview.wrappedValue.toggle()
+                } label: {
+                    Image(systemName: showPreview.wrappedValue ? "rectangle.bottomhalf.inset.filled" : "rectangle.split.1x2")
+                }
+                .buttonStyle(.borderless)
+                .help(showPreview.wrappedValue ? "Hide the preview" : "Show a preview of the selected file or folder")
 
                 TickerText(text: fileSystem.currentPath)
                     .font(.system(.caption, design: .monospaced))
@@ -813,6 +826,15 @@ struct FileBrowserPanel: View {
                 }
             }
 
+            // Preview area. Hidden while the player is maximized — then the player IS the
+            // preview, his words: "it takes over the preview because the media player is the
+            // preview."
+            if showPreview.wrappedValue && !(showMediaPlayer && currentMedia != nil && !playerMinimized) {
+                Divider()
+                PanePreview(item: previewTarget)
+                    .containerRelativeFrame(.vertical) { height, _ in height * 0.4 }
+            }
+
             // Selected file metadata footer
             if let selectedID = selectedItems.first,
                let selectedFile = fileSystem.files.first(where: { $0.id == selectedID }) {
@@ -854,7 +876,8 @@ struct FileBrowserPanel: View {
                 isCurrentlyPlaying: $isCurrentlyPlaying,
                 fileSystem: fileSystem,
                 onSwitchToOpposite: onSwitchToOpposite,
-                getOppositeFirstMediaURL: getOppositeFirstMediaURL
+                getOppositeFirstMediaURL: getOppositeFirstMediaURL,
+                isMinimized: $playerMinimized
             )
 
             // Breadcrumbs footer
@@ -1805,6 +1828,12 @@ struct FileBrowserPanel: View {
         } catch {
             print("Error copying to other pane: \(error)")
         }
+    }
+
+    /// What the preview shows: the item last clicked, else the first selected.
+    private var previewTarget: FileItem? {
+        if let last = lastSelectedItem, selectedItems.contains(last.id) { return last }
+        return fileSystem.files.first { selectedItems.contains($0.id) }
     }
 
     private func copySelectedToOtherPane() {
