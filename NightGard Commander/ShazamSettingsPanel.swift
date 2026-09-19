@@ -69,9 +69,9 @@ struct ShazamSettingsPanel: View {
                     }
                 }
 
-                Section("Music Library") {
+                Section("Media Library") {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("The target music library parent directory. Consolidated and normalized files are written here.")
+                        Text("The designated media folder. Scan for Media can send music, video and photos here.")
                             .font(.caption)
                             .foregroundColor(.secondary)
 
@@ -112,7 +112,7 @@ struct ShazamSettingsPanel: View {
                             .disabled(musicLibraryPath.isEmpty)
                         }
 
-                        Text("You can also right-click any folder in either pane and choose Designate as Target Music Library.")
+                        Text("You can also right-click any folder in either pane and choose Designate as Media Library.")
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
@@ -305,7 +305,7 @@ struct ShazamSettingsPanel: View {
         panel.allowsMultipleSelection = false
         panel.canCreateDirectories = true
         panel.prompt = "Designate"
-        panel.message = "Select the target music library parent directory"
+        panel.message = "Select the media folder"
 
         if !musicLibraryPath.isEmpty, folderExists(musicLibraryPath) {
             panel.directoryURL = URL(fileURLWithPath: musicLibraryPath)

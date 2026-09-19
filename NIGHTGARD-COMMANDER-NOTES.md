@@ -367,3 +367,33 @@ Cause: `PanePreview` is sized `containerRelativeFrame(.vertical) { height * 0.4 
 not the pane. Four progress bars shrank the panes; the preview kept its size and the list fell to one row.
 Fix wanted: an **adjustable** split between list and preview (drag), sized from the pane itself. Goes with
 item 4 above (draggable pane divider, bars that fold to one line).
+
+## Build 68 — Scan for Media, rebuilt from his report (2026-09-19 morning)
+
+**His report:** *"i wanted to just select a drive and have it scan the whole drive for media but the
+selected folder aparmtly didnt get scanned"* · *"when selecting the destination it said select music
+folder when it should have said media"* · *"it has that popup and wouldnt allow me to do anything
+else. it wasnt like last night where i was able to have four different status bars"* · and a beach
+ball that made him force-quit from Xcode.
+
+**His rules, same morning:** *"the photos should be copied using the enclosing photolibrarys database
+to reinstate name and metadata"* · *"photos copied not moved"* · *"it should tell the user photos were
+copied not moved because they were in {photolibrary name and filepath}"*.
+
+- **Photos are media.** The scanner only knew audio and video, so photo folders came back empty.
+- **Scan Whole Drive "<name>" for Media…** on the right-click menu. On the Mac's own drive it skips
+  /Volumes (every other drive) and the system folders.
+- **The walk is off the main thread** (`@concurrent`), with a Stop Scanning button and an items-looked-at count.
+- **Photos libraries are never walked** — packaged or a plain-folder backup. Each is EXTRACTED through its
+  own database (real names, dates), always COPIED. The summary names each library and its path.
+- **Loose photos are always copied**, even when the action is Move. Audio and video follow the action.
+- **Copy/Move go to the job system** (`FileOpMode.media`): the sheet closes, a bar takes over with Pause,
+  clash questions (Skip / Keep Both), read-back check and the move log. The old copy loop ran on the
+  main thread — that was the beach ball — and is gone.
+- **"Music Library" → "Media Library"** in Settings, the folder picker and the right-click menu.
+- Bug caught by the new test: two libraries extracting into one folder both claimed `IMG_0001.JPG`;
+  names are now shared across the whole media job.
+- Tests: new media suite ALL PASSED on the Mac drive, Raid and Cold Storage; last night's engine suite
+  ALL PASSED (73). ⚠️ **Run the harness with `NGC_OPLOG_DIR` set** — without it the tests write their
+  move logs into the REAL Operations folder (happened once this morning; 144 test logs, 20 Raid Trash
+  items and 96 test lines in "Verified copies.tsv" were found and removed; his 9 real logs untouched).

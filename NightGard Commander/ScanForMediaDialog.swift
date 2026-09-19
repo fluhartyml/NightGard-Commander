@@ -11,25 +11,33 @@ import AppKit
 struct ScanForMediaDialog: View {
     let sourceFolders: [FileItem]
     let playlistManager: PlaylistManager?
+    /// Copies and moves go to the same job system as ⌘5 / ⌘6 (build 68): the sheet closes,
+    /// a progress bar takes over, and the window stays usable. His report, 2026-09-19:
+    /// "it has that popup and wouldnt allow me to do anything else. it wasnt like last
+    /// night where i was able to have four different status bars" — and a beach ball,
+    /// because the old copy loop ran on the main thread.
+    let fileOps: FileOperationController?
     let onComplete: () -> Void
     let onNavigateOtherPane: (String) -> Void
     @Binding var isPresented: Bool
 
     // Convenience init for single folder
-    init(sourceFolder: FileItem, destinationPath: String, playlistManager: PlaylistManager?, onComplete: @escaping () -> Void, onNavigateOtherPane: @escaping (String) -> Void, isPresented: Binding<Bool>) {
+    init(sourceFolder: FileItem, destinationPath: String, playlistManager: PlaylistManager?, fileOps: FileOperationController? = nil, onComplete: @escaping () -> Void, onNavigateOtherPane: @escaping (String) -> Void, isPresented: Binding<Bool>) {
         self.sourceFolders = [sourceFolder]
         self._destinationPath = State(initialValue: destinationPath)
         self.playlistManager = playlistManager
+        self.fileOps = fileOps
         self.onComplete = onComplete
         self.onNavigateOtherPane = onNavigateOtherPane
         self._isPresented = isPresented
     }
 
     // Init for multiple folders
-    init(sourceFolders: [FileItem], destinationPath: String, playlistManager: PlaylistManager?, onComplete: @escaping () -> Void, onNavigateOtherPane: @escaping (String) -> Void, isPresented: Binding<Bool>) {
+    init(sourceFolders: [FileItem], destinationPath: String, playlistManager: PlaylistManager?, fileOps: FileOperationController? = nil, onComplete: @escaping () -> Void, onNavigateOtherPane: @escaping (String) -> Void, isPresented: Binding<Bool>) {
         self.sourceFolders = sourceFolders
         self._destinationPath = State(initialValue: destinationPath)
         self.playlistManager = playlistManager
+        self.fileOps = fileOps
         self.onComplete = onComplete
         self.onNavigateOtherPane = onNavigateOtherPane
         self._isPresented = isPresented
@@ -88,9 +96,9 @@ struct ScanForMediaDialog: View {
     enum Organization: String, CaseIterable {
         case flatten = "Flatten (all in one folder)"
         case byExtension = "Folders by Extension (MP3/, M4A/, MP4/...)"
-        case byMediaType = "Folders by Media Type (Audio/, Video/)"
+        case byMediaType = "Folders by Media Type (Audio/, Video/, Photos/)"
         // His ask, 2026-09-11: media type first, then extension inside it.
-        case byMediaTypeThenExtension = "Folders by Media Type then Extension (Audio/MP3/, Video/MP4/...)"
+        case byMediaTypeThenExtension = "Folders by Media Type then Extension (Audio/MP3/, Photos/JPG/...)"
     }
 
     var body: some View {
@@ -128,7 +136,7 @@ struct ScanForMediaDialog: View {
                     // Cannot execute a designated-folder action with nothing
                     // designated, or with its drive unmounted. Refusing here beats
                     // failing after the scan.
-                    .disabled(scanner.foundFiles.isEmpty
+                    .disabled(nothingToDo
                               || (selectedAction.usesMediaLibrary && !mediaLibraryIsReachable))
                     .help(actionHelpText)
                 } else if phase == .executing {
@@ -177,7 +185,22 @@ struct ScanForMediaDialog: View {
             Text("Found: \(scanner.foundFiles.count) files")
                 .font(.title3)
                 .fontWeight(.semibold)
+
+            if !scanner.foundLibraries.isEmpty {
+                Text("and \(scanner.foundLibraries.count) Photos \(scanner.foundLibraries.count == 1 ? "library" : "libraries")")
+                    .font(.subheadline)
+            }
+            Text("\(scanner.checkedCount.formatted()) items looked at")
+                .font(.caption)
+                .foregroundColor(.secondary)
+
+            Button("Stop Scanning") { scanner.cancel() }
         }
+    }
+
+    /// Add to Playlist takes files only; the copy and move actions also take libraries.
+    private var nothingToDo: Bool {
+        scanner.foundFiles.isEmpty && (scanner.foundLibraries.isEmpty || selectedAction == .addToPlaylist)
     }
 
     // MARK: - Review View
@@ -186,6 +209,30 @@ struct ScanForMediaDialog: View {
             Text("Found \(scanner.foundFiles.count) media files")
                 .font(.headline)
                 .padding(.leading, 4)
+
+            // His rule, 2026-09-19: "the photos should be copied using the enclosing
+            // photolibrarys database to reinstate name and metadata" · "photos copied not
+            // moved". Said here, before Execute, not only in the summary afterwards.
+            if !scanner.foundLibraries.isEmpty {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("and \(scanner.foundLibraries.count) Photos \(scanner.foundLibraries.count == 1 ? "library" : "libraries") — their photos come out under their real names and dates, read from each library's own database, and are copied, never moved:")
+                        .font(.caption)
+                    ForEach(scanner.foundLibraries, id: \.self) { lib in
+                        Text("• \(lib.lastPathComponent)  —  \(lib.deletingLastPathComponent().path)")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                }
+                .padding(.leading, 4)
+            }
+            if scanner.foundFiles.contains(where: { scanner.getMediaType(for: $0) == .photo }) {
+                Text("Photos are always copied, even when the action is Move.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .padding(.leading, 4)
+            }
 
             // Size and space info
             HStack {
@@ -246,6 +293,7 @@ struct ScanForMediaDialog: View {
                 VStack(alignment: .leading, spacing: 12) {
                     let audioCount = scanner.foundFiles.filter { scanner.getMediaType(for: $0) == .audio }.count
                     let videoCount = scanner.foundFiles.filter { scanner.getMediaType(for: $0) == .video }.count
+                    let photoCount = scanner.foundFiles.filter { scanner.getMediaType(for: $0) == .photo }.count
 
                     HStack(spacing: 16) {
                         if audioCount > 0 {
@@ -261,6 +309,14 @@ struct ScanForMediaDialog: View {
                                 Image(systemName: "film")
                                     .foregroundColor(Color(red: 0.61, green: 0.35, blue: 0.71))
                                 Text("\(videoCount) Video")
+                                    .font(.subheadline)
+                            }
+                        }
+                        if photoCount > 0 {
+                            HStack(spacing: 4) {
+                                Image(systemName: "photo")
+                                    .foregroundColor(.teal)
+                                Text("\(photoCount) Photos")
                                     .font(.subheadline)
                             }
                         }
@@ -465,6 +521,21 @@ struct ScanForMediaDialog: View {
 
             // Navigate other pane to destination before starting operation
             onNavigateOtherPane(destinationPath)
+
+            // Build 68: the job system does the work, off the main thread, with its own
+            // bar, Pause, clash questions and read-back check. This sheet just closes.
+            guard let fileOps else {
+                errorMessage = "Copying is not available from here right now."
+                showErrorAlert = true
+                return
+            }
+            let kind: FileOpKind = (selectedAction == .moveToOtherPane || selectedAction == .moveToMediaLibrary) ? .move : .copy
+            let plan = mediaPlan()
+            let sources = scanner.foundLibraries + scanner.foundFiles
+            fileOps.start(kind, sources: sources, target: URL(fileURLWithPath: destinationPath),
+                          mode: .media(plan)) { _ in onComplete() }
+            isPresented = false
+            return
         }
 
         phase = .executing
@@ -472,23 +543,39 @@ struct ScanForMediaDialog: View {
         processedCount = 0
 
         Task {
-            switch selectedAction {
-            case .addToPlaylist:
+            // Only Add to Playlist runs here now; copies and moves returned above.
+            if selectedAction == .addToPlaylist {
                 await addToPlaylist()
-            case .copyToOtherPane:
-                await copyFiles()
-            case .moveToOtherPane:
-                await moveFiles()
-            case .copyToMediaLibrary:
-                await copyFiles()
-            case .moveToMediaLibrary:
-                await moveFiles()
             }
             await MainActor.run {
                 phase = .complete
                 onComplete()
             }
         }
+    }
+
+    /// Where each scanned file goes, under the chosen organization. Photos libraries land
+    /// in the Photos shelf when there is one; every photo is marked copy-only.
+    private func mediaPlan() -> MediaPlan {
+        var plan = MediaPlan()
+        for url in scanner.foundFiles {
+            let path = url.standardizedFileURL.path
+            let type = scanner.getMediaType(for: url)
+            let ext = url.pathExtension.uppercased()
+            switch selectedOrganization {
+            case .flatten: plan.folders[path] = ""
+            case .byExtension: plan.folders[path] = ext
+            case .byMediaType: plan.folders[path] = type.rawValue
+            case .byMediaTypeThenExtension: plan.folders[path] = "\(type.rawValue)/\(ext)"
+            }
+            if type == .photo { plan.copyOnly.insert(path) }
+        }
+        for lib in scanner.foundLibraries {
+            let shelf = (selectedOrganization == .byMediaType || selectedOrganization == .byMediaTypeThenExtension)
+                ? MediaScanner.MediaType.photo.rawValue : ""
+            plan.libraries[lib.standardizedFileURL.path] = shelf
+        }
+        return plan
     }
 
     private func addToPlaylist() async {
@@ -512,125 +599,12 @@ struct ScanForMediaDialog: View {
         }
     }
 
-    private func copyFiles() async {
-        await processFiles(move: false)
-    }
-
-    private func moveFiles() async {
-        await processFiles(move: true)
-    }
-
-    private func processFiles(move: Bool) async {
-        let fileManager = FileManager.default
-        let destURL = URL(fileURLWithPath: destinationPath)
-
-        for sourceURL in scanner.foundFiles {
-            guard !scanner.isCancelled else { break }
-
-            do {
-                let fileName = sourceURL.lastPathComponent
-                var destFileURL: URL
-
-                // Determine destination based on organization
-                switch selectedOrganization {
-                case .flatten:
-                    destFileURL = destURL.appendingPathComponent(fileName)
-
-                case .byExtension:
-                    let ext = sourceURL.pathExtension.uppercased()
-                    let extFolder = destURL.appendingPathComponent(ext)
-                    try? fileManager.createDirectory(at: extFolder, withIntermediateDirectories: true)
-                    destFileURL = extFolder.appendingPathComponent(fileName)
-
-                case .byMediaType:
-                    let mediaType = scanner.getMediaType(for: sourceURL).rawValue
-                    let typeFolder = destURL.appendingPathComponent(mediaType)
-                    try? fileManager.createDirectory(at: typeFolder, withIntermediateDirectories: true)
-                    destFileURL = typeFolder.appendingPathComponent(fileName)
-
-                case .byMediaTypeThenExtension:
-                    // Audio/MP3/, Audio/M4A/, Video/MP4/, Video/MOV/ — media type is
-                    // the shelf, extension is the row on it.
-                    let mediaType = scanner.getMediaType(for: sourceURL).rawValue
-                    let ext = sourceURL.pathExtension.uppercased()
-                    let nested = destURL
-                        .appendingPathComponent(mediaType)
-                        .appendingPathComponent(ext)
-                    try? fileManager.createDirectory(at: nested, withIntermediateDirectories: true)
-                    destFileURL = nested.appendingPathComponent(fileName)
-                }
-
-                // Handle duplicates
-                destFileURL = getUniqueFileURL(destFileURL)
-
-                // ⛔ GUARDRAIL — a file that belongs to another app is ALWAYS copied,
-                // even when Move is the selected action. His instruction, 2026-09-11:
-                // "it should have a guardrail to only copy from mail attachments no
-                // matter if move is selected or not."
-                //
-                // Moving a Mail attachment out of its container breaks the message it
-                // belongs to, and the same is true of Messages and of the originals
-                // inside a Photos library. The user cannot see that damage until they
-                // open the message, which is far too late for an undo.
-                if move && !MoveGuard.mustCopyNotMove(sourceURL) {
-                    try fileManager.moveItem(at: sourceURL, to: destFileURL)
-                } else {
-                    try fileManager.copyItem(at: sourceURL, to: destFileURL)
-                }
-
-                await MainActor.run {
-                    processedCount += 1
-                }
-            } catch {
-                // Check for disk space error
-                let nsError = error as NSError
-                let isDiskFull = nsError.code == NSFileWriteOutOfSpaceError ||
-                                 nsError.domain == NSCocoaErrorDomain && nsError.code == 640
-
-                await MainActor.run {
-                    if isDiskFull {
-                        errorMessage = "Disk full: Could not copy \(sourceURL.lastPathComponent). \(processedCount) of \(totalCount) files copied."
-                        showErrorAlert = true
-                        scanner.cancel()
-                    } else {
-                        // Show error for first failure, then continue
-                        if errorMessage == nil {
-                            errorMessage = "Failed to copy \(sourceURL.lastPathComponent): \(error.localizedDescription)\n\nContinuing with remaining files..."
-                            showErrorAlert = true
-                        }
-                        // Silently continue - first error already shown to user
-                    }
-                }
-
-                if isDiskFull {
-                    break
-                }
-            }
-        }
-    }
-
-    private func getUniqueFileURL(_ url: URL) -> URL {
-        let fileManager = FileManager.default
-        var uniqueURL = url
-        var counter = 2
-
-        while fileManager.fileExists(atPath: uniqueURL.path) {
-            let name = url.deletingPathExtension().lastPathComponent
-            let ext = url.pathExtension
-            let newName = "\(name)-\(counter).\(ext)"
-            uniqueURL = url.deletingLastPathComponent().appendingPathComponent(newName)
-            counter += 1
-        }
-
-        return uniqueURL
-    }
-
     // MARK: - Helpers
     private func iconForExtension(_ ext: String) -> String {
-        if scanner.getMediaType(for: URL(fileURLWithPath: "file.\(ext)")) == .audio {
-            return "music.note"
-        } else {
-            return "film"
+        switch scanner.getMediaType(for: URL(fileURLWithPath: "file.\(ext)")) {
+        case .audio: return "music.note"
+        case .photo: return "photo"
+        default: return "film"
         }
     }
 
@@ -641,6 +615,8 @@ struct ScanForMediaDialog: View {
             return Color(red: 0.85, green: 0.65, blue: 0.13) // Mustard yellow
         case .video:
             return Color(red: 0.61, green: 0.35, blue: 0.71) // Purple
+        case .photo:
+            return .teal
         case .other:
             return .gray
         }

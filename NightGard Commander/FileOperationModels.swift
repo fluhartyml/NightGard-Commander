@@ -33,14 +33,35 @@ nonisolated enum FileOpMode: Sendable, Equatable {
     /// 7.6 — the originals inside a Photos library, under their REAL names and dates (7.7),
     /// optionally converted (7.9). Copy leaves the library as it was; Move empties it.
     case extract(ExtractFormat)
+    /// Scan for Media (build 68): each scanned file goes into its own subfolder of the
+    /// target, Photos libraries come out through Extract, and photos are only copied.
+    case media(MediaPlan)
 
     var title: String {
         switch self {
         case .standard: return ""
         case .flatten: return "Flatten"
         case .extract: return "Extract"
+        case .media: return "Media"
         }
     }
+}
+
+/// What Scan for Media hands the engine. Paths are compared as strings, so every one is
+/// a standardized file path.
+///
+/// ⛔ PHOTOS ARE COPIED, NEVER MOVED — his rule, 2026-09-19: "photos copied not moved".
+/// `copyOnly` holds every photo, whatever action was chosen.
+/// ⭐ A PHOTOS LIBRARY COMES OUT THROUGH ITS OWN DATABASE — his rule, same morning: "the
+/// photos should be copied using the enclosing photolibrarys database to reinstate name
+/// and metadata". So a library is not walked file by file; it is Extracted.
+nonisolated struct MediaPlan: Sendable, Equatable {
+    /// Source file path → subfolder of the target it goes in ("" = the target itself).
+    var folders: [String: String] = [:]
+    /// Source paths that are copied even when the action is Move.
+    var copyOnly: Set<String> = []
+    /// Photos library path → subfolder of the target its photos are extracted into.
+    var libraries: [String: String] = [:]
 }
 
 /// 7.9 — his ask: "i would choose jpg but maybe a printshop uses png or another format".

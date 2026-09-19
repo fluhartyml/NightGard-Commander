@@ -185,6 +185,8 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
                 try await planFlatten(valid)
             case let .extract(format):
                 try await planExtract(valid, format: format)
+            case let .media(plan):
+                try await planMedia(valid, plan: plan)
             }
             try await execute()
             if mode == .flatten && kind == .move { try await offerEmptyFolders(valid) }
@@ -472,6 +474,11 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
 
     /// "Apply to all" for the flatten question — Skip or Keep Both only (7.2).
     private var flattenForAll: FileChoice?
+    /// Scan for Media plans several libraries and loose files into the same folders in
+    /// one job, so the names each one claims must be shared — otherwise two libraries
+    /// both claim “IMG_0001.JPG” and the second fails at copy time. Caught by the build-68
+    /// test. Nil outside a media job.
+    private var sharedClaims: [String: URL]?
     private var hiddenLeftBehind = 0
 
     /// Every file under each source goes straight into the target. Libraries and other
@@ -509,11 +516,12 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
 
     /// How many incoming names will meet something — already in the target, or another
     /// incoming file with the same name. What "Apply to all" covers.
-    private func countFlatClashes(_ names: [String]) -> Int {
+    private func countFlatClashes(_ names: [String], in folder: URL? = nil) -> Int {
+        let dir = folder ?? targetDir
         var seen = Set<String>()
         var clashes = 0
         for name in names {
-            let path = targetDir.appendingPathComponent(name).path
+            let path = dir.appendingPathComponent(name).path
             if seen.contains(path) || exists(URL(fileURLWithPath: path)) { clashes += 1 }
             seen.insert(path)
         }
@@ -523,8 +531,8 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
     /// The target for one flattened item, or nil if he chose Skip. Only Skip or Keep Both
     /// are offered (7.2) — a flatten never replaces what is already there.
     private func resolveFlatTarget(src: URL, facts s: FileFacts, name: String, remaining: inout Int,
-                                   claimed: inout [String: URL]) async throws -> URL? {
-        var dst = targetDir.appendingPathComponent(name)
+                                   claimed: inout [String: URL], in folder: URL? = nil) async throws -> URL? {
+        var dst = (folder ?? targetDir).appendingPathComponent(name)
         let inTarget = exists(dst)
         let incoming = claimed[dst.path]
         if inTarget || incoming != nil {
@@ -596,7 +604,11 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
 
     // MARK: - Plan 7.6–7.11: Extract from a Photos library
 
-    private func planExtract(_ roots: [URL], format: ExtractFormat) async throws {
+    /// `folder` puts the photos in a subfolder of the target (Scan for Media sorts them);
+    /// `forceCopy` leaves the library whole even when the action is Move.
+    private func planExtract(_ roots: [URL], format: ExtractFormat, into folder: URL? = nil,
+                             forceCopy: Bool = false) async throws {
+        let dir = folder ?? targetDir
         guard roots.count == 1, let library = roots.first else {
             summary.failed.append(.init(path: targetDir.path, reason: "Choose one Photos library to extract from."))
             return
@@ -615,7 +627,7 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
         if contents.missingOriginals > 0 {
             summary.notes.append(.init(path: library.path, reason: "\(countText(contents.missingOriginals, "photo")) \(contents.missingOriginals == 1 ? "has" : "have") no original on this drive (kept in iCloud only), so \(contents.missingOriginals == 1 ? "it was" : "they were") not extracted."))
         }
-        if kind == .move, let reason = MoveGuard.reason(library) {
+        if kind == .move, !forceCopy, let reason = MoveGuard.reason(library) {
             summary.notes.append(.init(path: library.path, reason: "Copied, not moved — \(reason). Moving originals out of the library Photos is using would break it."))
         }
 
@@ -634,8 +646,9 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
             }
         }
 
-        var remaining = countFlatClashes(planned.map(\.name))
-        var claimed: [String: URL] = [:]
+        var remaining = countFlatClashes(planned.map(\.name), in: dir)
+        var claimed: [String: URL] = sharedClaims ?? [:]
+        defer { if sharedClaims != nil { sharedClaims = claimed } }
         for item in planned {
             try checkCancelled()
             let s = facts(item.src)
@@ -643,10 +656,83 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
             progress.currentName = item.name
             await report()
             guard let dst = try await resolveFlatTarget(src: item.src, facts: s, name: item.name,
-                                                        remaining: &remaining, claimed: &claimed) else { continue }
-            let move = kind == .move && MoveGuard.reason(item.src) == nil
+                                                        remaining: &remaining, claimed: &claimed, in: dir) else { continue }
+            let move = kind == .move && !forceCopy && MoveGuard.reason(item.src) == nil
             ops.append(.extract(src: item.src, dst: dst, move: move,
                                 format: item.convert ? format : .original, date: item.date, size: s.size))
+        }
+    }
+
+    // MARK: - Plan: Scan for Media (build 68)
+
+    /// Each scanned file into its subfolder; each Photos library through Extract, copied.
+    /// Clashes are asked the Flatten way — Skip or Keep Both, never Replace.
+    private func planMedia(_ sources: [URL], plan: MediaPlan) async throws {
+        // The subfolders first, so every file has somewhere to land.
+        var badFolders = Set<String>()
+        for rel in Set(plan.folders.values).union(plan.libraries.values) where !rel.isEmpty {
+            let dir = targetDir.appendingPathComponent(rel, isDirectory: true)
+            do {
+                try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+            } catch {
+                badFolders.insert(rel)
+                summary.failed.append(.init(path: dir.path, reason: "Could not create the folder: \(error.localizedDescription)"))
+            }
+        }
+
+        sharedClaims = [:]
+        // Photos libraries — through their own database, always copied.
+        for src in sources {
+            guard let rel = plan.libraries[src.path], !badFolders.contains(rel) else { continue }
+            try await planExtract([src], format: .original,
+                                  into: rel.isEmpty ? nil : targetDir.appendingPathComponent(rel), forceCopy: true)
+        }
+
+        // Loose files.
+        let files = sources.filter { plan.folders[$0.path] != nil && !badFolders.contains(plan.folders[$0.path] ?? "") }
+        var remaining = 0
+        var byFolder: [String: [String]] = [:]
+        for src in files { byFolder[plan.folders[src.path] ?? "", default: []].append(src.lastPathComponent) }
+        for (rel, names) in byFolder {
+            remaining += countFlatClashes(names, in: rel.isEmpty ? nil : targetDir.appendingPathComponent(rel))
+        }
+        var claimed: [String: URL] = sharedClaims ?? [:]
+        var alreadyHome = 0
+        for src in files {
+            try checkCancelled()
+            let rel = plan.folders[src.path] ?? ""
+            let folder = rel.isEmpty ? targetDir : targetDir.appendingPathComponent(rel)
+            // A file already where it would go (scanning the media folder itself) stays put.
+            if src.deletingLastPathComponent().standardizedFileURL.path == folder.standardizedFileURL.path {
+                alreadyHome += 1
+                continue
+            }
+            let s = facts(src)
+            progress.itemsChecked += 1
+            progress.currentName = src.lastPathComponent
+            await report()
+            guard let dst = try await resolveFlatTarget(src: src, facts: s, name: src.lastPathComponent,
+                                                        remaining: &remaining, claimed: &claimed, in: folder) else { continue }
+            let move = !plan.copyOnly.contains(src.path) && mayMove(src)
+            try addNew(src: src, dst: dst, facts: s, move: move)
+        }
+        if alreadyHome > 0 {
+            summary.notes.append(.init(path: targetDir.path,
+                reason: "\(countText(alreadyHome, "file")) \(alreadyHome == 1 ? "was" : "were") already in \(alreadyHome == 1 ? "its" : "their") media folder and left where \(alreadyHome == 1 ? "it was" : "they were")."))
+        }
+        let photosCopied = files.filter { plan.copyOnly.contains($0.path) }.count
+        // His wording, 2026-09-19: "it should tell the user photos were copied not moved
+        // because they were in {photolibrary name and filepath}". One line per library.
+        if kind == .move {
+            for library in plan.libraries.keys.sorted() {
+                let url = URL(fileURLWithPath: library)
+                summary.notes.append(.init(path: library,
+                    reason: "Photos in “\(url.lastPathComponent)” (\(library)) were copied, not moved, because they are inside that Photos library."))
+            }
+        }
+        if kind == .move && photosCopied > 0 {
+            summary.notes.append(.init(path: targetDir.path,
+                reason: "\(countText(photosCopied, "photo")) copied, not moved — photos are always copied."))
         }
     }
 

@@ -173,7 +173,7 @@ final class FileOperationController {
         switch mode {
         case .standard:
             out += sources.map { target.appendingPathComponent($0.lastPathComponent) }
-        case .flatten, .extract:
+        case .flatten, .extract, .media:
             out.append(target)
         }
         return out

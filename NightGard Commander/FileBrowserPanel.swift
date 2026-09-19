@@ -529,7 +529,7 @@ struct FileBrowserPanel: View {
                                         Image(systemName: "checkmark.seal.fill")
                                             .font(.system(size: 12))
                                             .foregroundColor(.green)
-                                            .help("Target Music Library")
+                                            .help("Media Library")
                                     }
 
                                     Spacer()
@@ -611,6 +611,11 @@ struct FileBrowserPanel: View {
                                 Button("Scan \(selectedItems.count) Folders for Media...") {
                                     scanSelectedFolders()
                                 }
+                                if let first = selectedFiles.first, let drive = driveItem(containing: first) {
+                                    Button("Scan Whole Drive “\(drive.name)” for Media...") {
+                                        folderToScan = drive
+                                    }
+                                }
                             }
                         } else if let itemID = selectedItems.first,
                                   let item = fileSystem.files.first(where: { $0.id == itemID }) {
@@ -637,6 +642,13 @@ struct FileBrowserPanel: View {
                                 Button("Scan for Media...") {
                                     folderToScan = item
                                 }
+                                // His ask, 2026-09-19: "i wanted to just select a drive and
+                                // have it scan the whole drive for media".
+                                if let drive = driveItem(containing: item) {
+                                    Button("Scan Whole Drive “\(drive.name)” for Media...") {
+                                        folderToScan = drive
+                                    }
+                                }
 
                                 // Designate this folder as the target music library
                                 // parent directory. Saved in Settings, so it survives
@@ -646,11 +658,11 @@ struct FileBrowserPanel: View {
                                 // a plain string comparison.
                                 let itemPath = URL(fileURLWithPath: item.path).standardizedFileURL.path
                                 if ShazamSettings.shared.musicLibraryPath == itemPath {
-                                    Button("Clear Target Music Library") {
+                                    Button("Clear Media Library") {
                                         ShazamSettings.shared.musicLibraryPath = ""
                                     }
                                 } else {
-                                    Button("Designate as Target Music Library") {
+                                    Button("Designate as Media Library") {
                                         ShazamSettings.shared.musicLibraryPath = itemPath
                                     }
                                 }
@@ -1007,6 +1019,7 @@ struct FileBrowserPanel: View {
                 sourceFolder: folder,
                 destinationPath: otherPanePath,
                 playlistManager: playlistManager,
+                fileOps: fileOps,
                 onComplete: {
                     onRefreshOtherPane()
                 },
@@ -1022,6 +1035,7 @@ struct FileBrowserPanel: View {
                 sourceFolders: selectedFoldersForScan,
                 destinationPath: otherPanePath,
                 playlistManager: playlistManager,
+                fileOps: fileOps,
                 onComplete: {
                     onRefreshOtherPane()
                 },
@@ -1900,6 +1914,20 @@ struct FileBrowserPanel: View {
             addAction(item)
         }
         selectedItems.removeAll()
+    }
+
+    /// The drive an item sits on, as a folder the scan can walk — the volume's root
+    /// ("/" for the Mac's own drive). Nil if macOS will not say.
+    private func driveItem(containing item: FileItem) -> FileItem? {
+        let url = URL(fileURLWithPath: item.path)
+        guard let values = try? url.resourceValues(forKeys: [.volumeURLKey, .volumeNameKey]),
+              let root = values.volume else { return nil }
+        return FileItem(name: values.volumeName ?? root.lastPathComponent,
+                        path: root.path,
+                        isDirectory: true,
+                        size: 0,
+                        modificationDate: Date(),
+                        creationDate: Date())
     }
 
     private func scanSelectedFolders() {

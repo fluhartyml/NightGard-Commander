@@ -725,6 +725,7 @@ struct FileOperationProgressBar: View {
         let verb: String
         switch job.mode {
         case .flatten: verb = job.kind == .move ? "Flattening (moving)" : "Flattening (copying)"
+        case .media: verb = job.kind == .move ? "Sorting media (moving)" : "Sorting media (copying)"
         case .extract: verb = job.kind == .move ? "Extracting (moving)" : "Extracting"
         case .standard: verb = job.isUndo ? "Undoing" : job.kind.gerund
         }
