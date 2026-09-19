@@ -757,6 +757,10 @@ struct FileBrowserPanel: View {
                         return .ignored
                     }
                     .onKeyPress(.init("m")) {
+                        // His report, 2026-09-19: "im trying to use spacebar and it wont let me" —
+                        // renaming a folder, the pane took Space as Play/Pause. While a name is
+                        // being typed, these keys belong to the text box (and "m" must never MOVE).
+                        if renamingItem != nil { return .ignored }
                         // M = Move selected file to other pane + play next
                         if let firstID = selectedItems.first,
                            let item = fileSystem.files.first(where: { $0.id == firstID }) {
@@ -766,6 +770,7 @@ struct FileBrowserPanel: View {
                     }
                     // NUCLEAR MODE ARROW KEYS
                     .onKeyPress(.leftArrow) {
+                        if renamingItem != nil { return .ignored }
                         if nuclearModeEnabled {
                             // ← = Undo last move (nuclear mode)
                             undoLastMove()
@@ -774,6 +779,7 @@ struct FileBrowserPanel: View {
                         return .ignored  // Let table handle arrow navigation
                     }
                     .onKeyPress(.rightArrow) {
+                        if renamingItem != nil { return .ignored }
                         if nuclearModeEnabled {
                             // → = Move to other pane + auto-play next (nuclear mode)
                             nuclearModeMove()
@@ -782,6 +788,7 @@ struct FileBrowserPanel: View {
                         return .ignored  // Let table handle arrow navigation
                     }
                     .onKeyPress(.upArrow) {
+                        if renamingItem != nil { return .ignored }
                         if nuclearModeEnabled {
                             // ↑ = Previous track + auto-play (nuclear mode)
                             playPreviousTrack()
@@ -797,6 +804,7 @@ struct FileBrowserPanel: View {
                         }
                     }
                     .onKeyPress(.downArrow) {
+                        if renamingItem != nil { return .ignored }
                         if nuclearModeEnabled {
                             // ↓ = Next track + auto-play (nuclear mode)
                             advanceToNextTrack()
@@ -812,6 +820,7 @@ struct FileBrowserPanel: View {
                         }
                     }
                     .onKeyPress(.space) {
+                        if renamingItem != nil { return .ignored }
                         // Space = Play/Pause
                         if currentMedia != nil {
                             if showMediaPlayer {

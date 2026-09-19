@@ -446,3 +446,9 @@ Now: **Show in Finder** opens Finder with the item selected (its folder, if the 
 His words: *"no we did the no sort on purpose for "dj mode""*. A pane lists items in the order the drive
 returns them (a network drive: roughly creation order). Claude proposed making Name the default; declined.
 Name order is one click away in each pane's sort menu (≡).
+
+## Build 75 — typing a name no longer triggers player keys (2026-09-19)
+His report: *"im trying to use spacebar and it wont let me"* — renaming "Developer" to a dated name, Space
+never reached the text box: the pane took it as Play/Pause. The same was true of ↑ ↓ ← → and **m**, and
+**m MOVES the selected file to the other pane** — a letter typed into a name could have started a move.
+All six now step aside (`.ignored`) while a rename is in progress, like Return already did (2026-09-11).
