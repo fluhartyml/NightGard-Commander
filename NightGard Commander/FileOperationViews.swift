@@ -641,46 +641,46 @@ private struct UndoLastView: View {
 // MARK: - Progress bar (sits above the command bar; browsing carries on)
 
 struct FileOperationProgressBar: View {
-    let controller: FileOperationController
+    /// One bar per running job — several can be running at once (his spec, 2026-09-18).
+    let job: FileOperationJob
 
     var body: some View {
-        if let p = controller.progress {
-            HStack(spacing: 14) {
-                Image(systemName: controller.runningKind == .move ? "arrow.right.doc.on.clipboard" : "doc.on.doc")
-                    .font(.title2)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(line(p)).lineLimit(1).truncationMode(.middle)
-                    if p.phase == .transferring {
-                        ProgressView(value: p.fraction)
-                    } else {
-                        ProgressView().progressViewStyle(.linear)
-                    }
-                    if p.phase == .transferring, p.folderCount > 0 {
-                        Text(folderLine(p)).font(.caption).lineLimit(1).truncationMode(.middle)
-                    }
-                    if p.phase == .transferring, p.bytesTotal > 0 || p.secondsLeft != nil {
-                        Text(detail(p)).font(.caption).foregroundStyle(.secondary)
-                    }
+        let p = job.progress
+        HStack(spacing: 14) {
+            Image(systemName: job.kind == .move ? "arrow.right.doc.on.clipboard" : "doc.on.doc")
+                .font(.title2)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(line(p)).lineLimit(1).truncationMode(.middle)
+                if p.phase == .transferring {
+                    ProgressView(value: p.fraction)
+                } else {
+                    ProgressView().progressViewStyle(.linear)
                 }
-                Button(p.isPaused ? "Resume" : "Pause") { controller.togglePause() }
-                    .disabled(p.phase != .transferring && p.phase != .buildingFolders)
-                Button("Cancel") { controller.cancel() }
-                    .help("Stops after the current file. Nothing half-copied is left behind.")
+                if p.phase == .transferring, p.folderCount > 0 {
+                    Text(folderLine(p)).font(.caption).lineLimit(1).truncationMode(.middle)
+                }
+                if p.phase == .transferring, p.bytesTotal > 0 || p.secondsLeft != nil {
+                    Text(detail(p)).font(.caption).foregroundStyle(.secondary)
+                }
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(Color.accentColor.opacity(0.08))
+            Button(p.isPaused ? "Resume" : "Pause") { job.togglePause() }
+                .disabled(p.phase != .transferring && p.phase != .buildingFolders)
+            Button("Cancel") { job.cancel() }
+                .help("Stops this one after the current file. Nothing half-copied is left behind. Any other copy or move carries on.")
         }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Color.accentColor.opacity(0.08))
     }
 
     private func line(_ p: FileOpProgress) -> String {
         let verb: String
-        switch controller.runningMode {
-        case .flatten: verb = controller.runningKind == .move ? "Flattening (moving)" : "Flattening (copying)"
-        case .extract: verb = controller.runningKind == .move ? "Extracting (moving)" : "Extracting"
-        case .standard: verb = controller.isUndo ? "Undoing" : controller.runningKind.gerund
+        switch job.mode {
+        case .flatten: verb = job.kind == .move ? "Flattening (moving)" : "Flattening (copying)"
+        case .extract: verb = job.kind == .move ? "Extracting (moving)" : "Extracting"
+        case .standard: verb = job.isUndo ? "Undoing" : job.kind.gerund
         }
-        if controller.presented != nil, p.phase == .checking { return "Waiting for your answer…" }
+        if job.isWaitingForAnswer { return "Waiting for your answer…" }
         switch p.phase {
         case .checking:
             return "Checking before anything moves… \(p.itemsChecked.formatted()) items looked at"
@@ -701,7 +701,7 @@ struct FileOperationProgressBar: View {
 
     private func detail(_ p: FileOpProgress) -> String {
         var parts = ["\(Fmt.size(p.bytesDone)) of \(Fmt.size(p.bytesTotal))"]
-        if controller.runningKind == .move && !controller.isUndo { parts[0] += " (includes reading each copy back to verify it)" }
+        if job.kind == .move && !job.isUndo { parts[0] += " (includes reading each copy back to verify it)" }
         if p.bytesPerSecond > 0 { parts.append("\(Fmt.size(Int64(p.bytesPerSecond)))/s") }
         if let raw = p.secondsLeft {
             // Rounded, so it reads as the estimate it is: 5-minute steps past an hour,

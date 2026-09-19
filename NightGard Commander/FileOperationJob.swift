@@ -1,0 +1,162 @@
+//
+//  FileOperationJob.swift
+//  NightGard Commander
+//
+//  Created by Michael Fluharty with Claude on 2026 Sep 18
+//
+//  ONE copy or move: its engine, its progress bar, its Pause and Cancel, and the question
+//  it is waiting on. Several can run at once from the same two panes — his words:
+//  "i want to be able to manipulate more folders between using the same two panes without
+//  leaving them on the same two disk locations" · "if it would open a new moving or copying
+//  bar in parallel would be best".
+//
+//  Every question still goes through FileOperationController, which shows them ONE AT A
+//  TIME in the order they were asked, so two jobs never talk over each other.
+//
+
+import SwiftUI
+import Observation
+
+@MainActor
+@Observable
+final class FileOperationJob: Identifiable, FileOpDelegate {
+
+    let id = UUID()
+    let kind: FileOpKind
+    let mode: FileOpMode
+    let isUndo: Bool
+    /// Every place this job reads from or writes to. A second job whose footprint overlaps
+    /// this one is refused rather than raced — two jobs must never touch the same item.
+    let footprint: [URL]
+
+    private(set) var progress = FileOpProgress()
+    /// True while one of this job's questions is on screen or waiting its turn.
+    private(set) var isWaitingForAnswer = false
+
+    @ObservationIgnored let control = FileOpControl()
+    @ObservationIgnored weak var owner: FileOperationController?
+    @ObservationIgnored var onFinish: ((FileOpSummary) -> Void)?
+
+    @ObservationIgnored private var folderReply: CheckedContinuation<Answer<FolderChoice>, Never>?
+    @ObservationIgnored private var confirmReply: CheckedContinuation<Bool, Never>?
+    @ObservationIgnored private var fileReply: CheckedContinuation<Answer<FileChoice>, Never>?
+    @ObservationIgnored private var errorReply: CheckedContinuation<ErrorChoice, Never>?
+    @ObservationIgnored private var emptyFoldersReply: CheckedContinuation<Bool, Never>?
+
+    init(kind: FileOpKind, mode: FileOpMode, isUndo: Bool, footprint: [URL]) {
+        self.kind = kind
+        self.mode = mode
+        self.isUndo = isUndo
+        self.footprint = footprint
+    }
+
+    // MARK: - Pause / cancel (this job only)
+
+    func togglePause() {
+        control.setPaused(!control.isPaused)
+        progress.isPaused = control.isPaused
+    }
+
+    /// Stops after the current file. A question it was waiting on is answered Cancel, and
+    /// one still waiting its turn is taken out of the line — the other jobs carry on.
+    func cancel() {
+        control.cancel()
+        owner?.withdrawQuestions(of: self)
+        answerPendingSafely()
+    }
+
+    // MARK: - FileOpDelegate — the engine asks; the controller puts it on screen in turn
+
+    func askFolder(_ question: FolderQuestion) async -> Answer<FolderChoice> {
+        await withCheckedContinuation { reply in
+            folderReply = reply
+            ask(.folder(question))
+        }
+    }
+
+    func confirmReplace(_ question: ReplaceConfirm) async -> Bool {
+        await withCheckedContinuation { reply in
+            confirmReply = reply
+            ask(.confirm(question))
+        }
+    }
+
+    func askFile(_ question: FileQuestion) async -> Answer<FileChoice> {
+        await withCheckedContinuation { reply in
+            fileReply = reply
+            ask(.file(question))
+        }
+    }
+
+    func askError(_ question: ErrorQuestion) async -> ErrorChoice {
+        await withCheckedContinuation { reply in
+            errorReply = reply
+            ask(.error(question))
+        }
+    }
+
+    func askEmptyFolders(_ question: EmptyFoldersQuestion) async -> Bool {
+        await withCheckedContinuation { reply in
+            emptyFoldersReply = reply
+            ask(.emptyFolders(question))
+        }
+    }
+
+    func report(_ progress: FileOpProgress) {
+        var p = progress
+        p.isPaused = control.isPaused
+        self.progress = p
+    }
+
+    private func ask(_ prompt: FileOperationController.Prompt) {
+        isWaitingForAnswer = true
+        guard let owner, !control.isCancelled else {
+            answerPendingSafely()
+            return
+        }
+        owner.show(prompt, for: self)
+    }
+
+    // MARK: - Answers, routed here by the controller
+
+    func answerFolder(_ choice: FolderChoice, applyToAll: Bool) {
+        isWaitingForAnswer = false
+        folderReply?.resume(returning: Answer(choice: choice, applyToAll: applyToAll))
+        folderReply = nil
+    }
+
+    func answerConfirm(_ confirmed: Bool) {
+        isWaitingForAnswer = false
+        confirmReply?.resume(returning: confirmed)
+        confirmReply = nil
+    }
+
+    func answerFile(_ choice: FileChoice, applyToAll: Bool) {
+        isWaitingForAnswer = false
+        fileReply?.resume(returning: Answer(choice: choice, applyToAll: applyToAll))
+        fileReply = nil
+    }
+
+    func answerError(_ choice: ErrorChoice) {
+        isWaitingForAnswer = false
+        errorReply?.resume(returning: choice)
+        errorReply = nil
+    }
+
+    func answerEmptyFolders(remove: Bool) {
+        isWaitingForAnswer = false
+        emptyFoldersReply?.resume(returning: remove)
+        emptyFoldersReply = nil
+    }
+
+    /// The question went away without a button (or the job was cancelled): answer it the
+    /// safe way so the engine never hangs — Cancel, and Leave for the emptied folders (7.5).
+    func answerPendingSafely() {
+        if folderReply != nil { answerFolder(.cancel, applyToAll: false) }
+        if confirmReply != nil { answerConfirm(false) }
+        if fileReply != nil { answerFile(.cancel, applyToAll: false) }
+        if errorReply != nil { answerError(.cancel) }
+        if emptyFoldersReply != nil { answerEmptyFolders(remove: false) }
+        isWaitingForAnswer = false
+    }
+}

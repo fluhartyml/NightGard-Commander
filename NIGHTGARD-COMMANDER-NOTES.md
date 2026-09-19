@@ -283,7 +283,7 @@ His report on 60: *"it fluctuates days 1 hour 50 minutes to 22 minutes"* (and 35
 - Rounded: "about 1 h 50 m left" (5-min steps past an hour), whole minutes under, "under a minute left".
 - Self-test on Cold Storage: 159 s job, estimates 324 → 319 → … → 50, never a >3× jump.
 
-## ⬜ PLANNED — his spec, 2026-09-18 18:1x. NOT BUILT. Build after his running Move finishes.
+## ✅ BUILT 2026-09-18 ~19:2x (after his Move finished) — his spec, 18:1x: refresh + parallel jobs
 **1. Pane refresh.** A pane kept listing files a running Move had already taken (derivatives/0: 731
 stale items, preview blank). Panes must refresh as an operation empties or fills the folder they show.
 
@@ -297,3 +297,19 @@ more folders between using the same two panes without leaving them on the same t
   it started without breaking the queue."*
 - Note for the build: parallel jobs share one network link to Cold Storage — each runs slower; the
   time-left estimate must be per job. Two jobs touching the same item must be refused, not raced.
+
+**How it was built:**
+- `FileOperationJob` = one copy/move: its engine, progress, Pause/Cancel, pending question. One bar each
+  (`ForEach(fileOps.jobs)`); Copy/Move/Flatten/Extract are no longer disabled while something runs.
+- The controller shows questions ONE AT A TIME, in the order asked, and routes each answer to the job that
+  asked. Cancelling a job takes its waiting question out of line; the others keep their places.
+- Refusal, not race: a job whose sources or destinations overlap a running job's (same path, inside, or
+  containing — case-insensitive) is not started; a summary says so in a sentence. Undo waits for all jobs.
+- Selection: a finished Move takes only ITS items out of the selection (it used to clear everything).
+- Refresh: `FileSystemService.refreshInPlace()` reads off the main thread, keeps unchanged items' IDs (so
+  the selection survives), does nothing if nothing changed, and if the folder is gone steps UP to the
+  nearest one left — `loadFiles` jumped all the way home (his right pane landed in ~ at 19:12).
+  While jobs run, a pane whose folder overlaps a job's footprint is refreshed every 3 s.
+- Tests (scratch harness driving the real controller): parallel jobs with a question each answered to the
+  right job, overlap refusals, cancel-in-line, refresh ID-keeping and step-up — ALL PASSED on the Mac
+  drive, Raid_4x4 and Cold Storage (SMB). ⚠️ The new bars were NOT looked at on screen yet.

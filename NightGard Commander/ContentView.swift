@@ -500,9 +500,10 @@ struct ContentView: View {
 
             Divider()
 
-            // A copy or move in progress. Browsing carries on underneath it.
-            if fileOps.isRunning {
-                FileOperationProgressBar(controller: fileOps)
+            // Copies and moves in progress — one bar each, several at once (his spec,
+            // 2026-09-18). Browsing, and starting another, carry on underneath them.
+            ForEach(fileOps.jobs) { job in
+                FileOperationProgressBar(job: job)
                 Divider()
             }
 
@@ -525,14 +526,14 @@ struct ContentView: View {
                 CommandButton(label: "Copy", shortcut: "⌘5") {
                     copyToOtherPane()
                 }
-                .disabled(activeSelectedItem == nil || fileOps.isRunning)
+                .disabled(activeSelectedItem == nil)
                 .keyboardShortcut("5", modifiers: .command)
                 .help(copyTooltip)
 
                 CommandButton(label: "Move", shortcut: "⌘6") {
                     moveToOtherPane()
                 }
-                .disabled(activeSelectedItem == nil || fileOps.isRunning)
+                .disabled(activeSelectedItem == nil)
                 .keyboardShortcut("6", modifiers: .command)
                 .help(moveTooltip)
 
@@ -580,12 +581,21 @@ struct ContentView: View {
         }
         .onAppear {
             fileOps.onDiskChanged = {
-                leftFileSystem.loadFiles()
-                rightFileSystem.loadFiles()
+                leftFileSystem.refreshInPlace()
+                rightFileSystem.refreshInPlace()
             }
             fileOps.onReveal = { folder in
                 if focusedPane == .left { leftFileSystem.navigateToFolder(folder.path) }
                 else { rightFileSystem.navigateToFolder(folder.path) }
+            }
+        }
+        // While anything runs, every few seconds re-read a pane whose folder a job is
+        // emptying or filling — his report: a pane kept showing 731 files a Move had
+        // already taken. Panes elsewhere are left alone.
+        .task(id: fileOps.isRunning) {
+            while fileOps.isRunning && !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(3))
+                refreshPanesTouchedByJobs()
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .undoLastMove)) { _ in
@@ -910,13 +920,8 @@ struct ContentView: View {
         fileOps.start(.move,
                       sources: sourceFiles.map { URL(fileURLWithPath: $0.path) },
                       target: URL(fileURLWithPath: targetPath)) { _ in
-            if pane == .left {
-                selectedLeftItem = nil
-                selectedLeftItems.removeAll()
-            } else {
-                selectedRightItem = nil
-                selectedRightItems.removeAll()
-            }
+            // Only what THIS move took leaves the selection — another may be being picked.
+            clearSelection(pane, of: sourceFiles)
             if let played = movedPlaying, !FileManager.default.fileExists(atPath: played.path) {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                     playNextTrackInFocusedPane(preferredTrackName: nextTrackName)
@@ -931,23 +936,45 @@ struct ContentView: View {
         let pane = focusedPane
         let selectedIDs = pane == .left ? selectedLeftItems : selectedRightItems
         let sourceFiles = activeFocusedFileSystem.files.filter { selectedIDs.contains($0.id) }
-        guard !sourceFiles.isEmpty, !fileOps.isRunning else { return }
+        guard !sourceFiles.isEmpty else { return }
         let targetPath = pane == .left ? rightFileSystem.currentPath : leftFileSystem.currentPath
         fileOps.start(kind,
                       sources: sourceFiles.map { URL(fileURLWithPath: $0.path) },
                       target: URL(fileURLWithPath: targetPath), mode: .flatten) { _ in
             guard kind == .move else { return }
-            if pane == .left { selectedLeftItem = nil; selectedLeftItems.removeAll() }
-            else { selectedRightItem = nil; selectedRightItems.removeAll() }
+            clearSelection(pane, of: sourceFiles)
         }
     }
 
     /// Plan 7.6 — the Photos library selected in the source pane, out into the other pane's
     /// folder under real names and dates. Asks Copy or Move and the file type first.
     private func extractToOtherPane() {
-        guard let item = activeSelectedItem, !fileOps.isRunning else { return }
+        guard let item = activeSelectedItem else { return }
         let targetPath = focusedPane == .left ? rightFileSystem.currentPath : leftFileSystem.currentPath
         fileOps.offerExtract(library: URL(fileURLWithPath: item.path), target: URL(fileURLWithPath: targetPath))
+    }
+
+    /// After a move: take the items it moved out of that pane's selection, and nothing else.
+    private func clearSelection(_ pane: FocusedPane, of items: [FileItem]) {
+        let ids = Set(items.map(\.id))
+        if pane == .left {
+            if let s = selectedLeftItem, ids.contains(s.id) { selectedLeftItem = nil }
+            selectedLeftItems.subtract(ids)
+        } else {
+            if let s = selectedRightItem, ids.contains(s.id) { selectedRightItem = nil }
+            selectedRightItems.subtract(ids)
+        }
+    }
+
+    /// Re-read each pane whose folder lies inside, or holds, anything a running job touches.
+    private func refreshPanesTouchedByJobs() {
+        for fs in [leftFileSystem, rightFileSystem] {
+            let here = URL(fileURLWithPath: fs.currentPath)
+            let touched = fileOps.jobs.contains { job in
+                job.footprint.contains { FileOperationController.overlaps($0, here) }
+            }
+            if touched { fs.refreshInPlace() }
+        }
     }
 
     private func playNextTrackInFocusedPane(preferredTrackName: String? = nil) {

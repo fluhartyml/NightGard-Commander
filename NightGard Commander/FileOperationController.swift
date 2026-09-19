@@ -4,9 +4,16 @@
 //
 //  Created by Michael Fluharty with Claude on 2026 Sep 18
 //
-//  The main-thread side of a copy or move: starts the engine in the background, puts
-//  each question in front of Michael and hands his answer back, shows progress, and
-//  keeps the summary. One operation at a time.
+//  The main-thread side of copies and moves: starts each one as a FileOperationJob, puts
+//  their questions in front of Michael ONE AT A TIME in the order they were asked, routes
+//  each answer back to the job that asked, and keeps the summaries.
+//
+//  ⭐ SEVERAL AT ONCE, FROM THE SAME TWO PANES — his spec, 2026-09-18 18:1x:
+//  "if it would open a new moving or copying bar in parallel would be best". A second window
+//  (⌘N) was ruled out: "command n is not realistic ( not intuitive)". So Copy and Move stay
+//  enabled while something runs, and each job gets its own bar.
+//  ⛔ Two jobs never touch the same item: one whose sources or destinations overlap a
+//  running job's is refused with a plain sentence, never raced.
 //
 
 import SwiftUI
@@ -14,7 +21,7 @@ import Observation
 
 @MainActor
 @Observable
-final class FileOperationController: FileOpDelegate {
+final class FileOperationController {
 
     /// What is on screen as a sheet. Every question WAITS for an answer — dismissing it
     /// any other way is treated as Cancel, never as a silent default.
@@ -41,214 +48,233 @@ final class FileOperationController: FileOpDelegate {
     struct Presented: Identifiable {
         let id = UUID()
         let prompt: Prompt
+        /// The job that asked, when it is a question. Nil for summaries and the other
+        /// prompts that belong to no running job.
+        let job: FileOperationJob?
     }
 
+    /// The prompt on screen. Set to nil by the sheet when it goes away.
     var presented: Presented?
-    var progress: FileOpProgress?
-    private(set) var isRunning = false
-    private(set) var runningKind: FileOpKind = .copy
-    private(set) var isUndo = false
+    /// Every copy or move still running, oldest first — one progress bar each.
+    private(set) var jobs: [FileOperationJob] = []
+    var isRunning: Bool { !jobs.isEmpty }
 
     /// Show a folder in a pane — the summary's "Show" buttons. Set by ContentView.
     var onReveal: ((URL) -> Void)?
     /// Reload the panes after anything changed on disk. Set by ContentView.
     var onDiskChanged: (() -> Void)?
 
-    private var control: FileOpControl?
-    private var onFinish: ((FileOpSummary) -> Void)?
-    private var folderReply: CheckedContinuation<Answer<FolderChoice>, Never>?
-    private var confirmReply: CheckedContinuation<Bool, Never>?
-    private var fileReply: CheckedContinuation<Answer<FileChoice>, Never>?
-    private var errorReply: CheckedContinuation<ErrorChoice, Never>?
-    private var emptyFoldersReply: CheckedContinuation<Bool, Never>?
-    private(set) var runningMode: FileOpMode = .standard
+    /// The prompt that is on screen and not yet answered. Kept apart from `presented`
+    /// because the sheet clears `presented` itself when it is dismissed.
+    @ObservationIgnored private var current: Presented?
+    /// Prompts waiting their turn behind the one on screen, oldest first.
+    @ObservationIgnored private var waiting: [Presented] = []
 
     // MARK: - Start
 
     func start(_ kind: FileOpKind, sources: [URL], target: URL, mode: FileOpMode = .standard,
                onFinish: ((FileOpSummary) -> Void)? = nil) {
-        guard !isRunning, !sources.isEmpty else { return }
-        let control = FileOpControl()
+        guard !sources.isEmpty else { return }
+        let footprint = Self.footprint(sources: sources, target: target, mode: mode)
+        if let refusal = refusal(for: footprint, kind: kind) {
+            show(.summary(refusal), for: nil)
+            return
+        }
+        let job = FileOperationJob(kind: kind, mode: mode, isUndo: false, footprint: footprint)
         let engine = FileOperationEngine(kind: kind, sources: sources, targetDir: target,
-                                         control: control, delegate: self, mode: mode)
-        runningMode = mode
-        begin(kind: kind, undo: false, control: control, onFinish: onFinish) { await engine.run() }
+                                         control: job.control, delegate: job, mode: mode)
+        begin(job, onFinish: onFinish) { await engine.run() }
     }
 
     /// Extract from a Photos library (7.6): asks Copy or Move and the file type first.
     func offerExtract(library: URL, target: URL, onFinish: ((FileOpSummary) -> Void)? = nil) {
-        guard !isRunning else { return }
         guard PhotosLibraryReader.isPhotosLibrary(library) else {
-            presented = Presented(prompt: .summary(FileOpSummary(kind: .copy, failed: [
-                .init(path: library.path, reason: "“\(library.lastPathComponent)” is not a Photos library. Select a .photoslibrary (or a backup of one) in the source pane.")])))
+            show(.summary(FileOpSummary(kind: .copy, failed: [
+                .init(path: library.path, reason: "“\(library.lastPathComponent)” is not a Photos library. Select a .photoslibrary (or a backup of one) in the source pane.")])), for: nil)
             return
         }
-        presented = Presented(prompt: .extractOptions(ExtractRequest(library: library, target: target, onFinish: onFinish)))
+        show(.extractOptions(ExtractRequest(library: library, target: target, onFinish: onFinish)), for: nil)
     }
 
     func answerExtract(_ request: ExtractRequest, kind: FileOpKind?, format: ExtractFormat) {
-        presented = nil
+        finishPrompt()
         guard let kind else { return }
         start(kind, sources: [request.library], target: request.target, mode: .extract(format), onFinish: request.onFinish)
     }
 
-    /// Undo a whole Move from its log.
+    /// Undo a whole Move from its log. Waits for every running job to finish first: an
+    /// undo puts files back all over the place, and nothing else may be touching them.
     func undo(logAt url: URL) {
         guard let log = Self.readLog(url) else { return }
         undo(log)
     }
 
     private func undo(_ log: OperationLog) {
-        guard !isRunning else { return }
-        let control = FileOpControl()
-        let engine = FileOperationEngine(undoing: log, control: control, delegate: self)
-        begin(kind: .move, undo: true, control: control, onFinish: nil) { await engine.run() }
+        guard !isRunning else {
+            show(.summary(FileOpSummary(kind: .move, notes: [
+                .init(path: OperationLog.folder.path, reason: "An undo waits until every copy and move has finished. Try it again when the progress bars are gone.")])), for: nil)
+            return
+        }
+        let job = FileOperationJob(kind: .move, mode: .standard, isUndo: true, footprint: [URL(fileURLWithPath: "/")])
+        let engine = FileOperationEngine(undoing: log, control: job.control, delegate: job)
+        begin(job, onFinish: nil) { await engine.run() }
     }
 
     /// Menu: Undo Last Move… — finds the newest Move that has not been undone and asks first.
     func offerUndoLastMove() {
-        guard !isRunning else { return }
         let folder = OperationLog.folder
         let files = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? []
         let logs = files.filter { $0.pathExtension == "json" }.compactMap(Self.readLog)
             .filter { $0.kind == .move && !$0.undone && $0.entries.contains { if case .moved = $0 { return true }; return false } }
             .sorted { $0.date > $1.date }
         if let newest = logs.first {
-            presented = Presented(prompt: .undoLast(newest))
+            show(.undoLast(newest), for: nil)
         } else {
-            presented = Presented(prompt: .summary(FileOpSummary(kind: .move, notes: [
-                .init(path: folder.path, reason: "There is no move left to undo.")])))
+            show(.summary(FileOpSummary(kind: .move, notes: [
+                .init(path: folder.path, reason: "There is no move left to undo.")])), for: nil)
         }
     }
 
     func confirmUndo(_ log: OperationLog, _ go: Bool) {
-        presented = nil
+        finishPrompt()
         if go { undo(log) }
     }
 
-    private func begin(kind: FileOpKind, undo: Bool, control: FileOpControl,
-                       onFinish: ((FileOpSummary) -> Void)?,
+    private func begin(_ job: FileOperationJob, onFinish: ((FileOpSummary) -> Void)?,
                        work: @escaping @Sendable () async -> FileOpSummary) {
-        isRunning = true
-        isUndo = undo
-        runningKind = kind
-        self.control = control
-        self.onFinish = onFinish
-        progress = FileOpProgress()
+        job.owner = self
+        job.onFinish = onFinish
+        jobs.append(job)
         Task { [weak self] in
             let summary = await work()
             guard let self else { return }
-            self.isRunning = false
-            self.runningMode = .standard
-            self.progress = nil
-            self.control = nil
+            self.withdrawQuestions(of: job)
+            self.jobs.removeAll { $0 === job }
             self.onDiskChanged?()
-            self.onFinish?(summary)
-            self.onFinish = nil
-            self.presented = Presented(prompt: .summary(summary))
+            job.onFinish?(summary)
+            job.onFinish = nil
+            self.show(.summary(summary), for: nil)
         }
     }
 
-    // MARK: - Pause / cancel
+    // MARK: - Two jobs must never touch the same item
 
-    func togglePause() {
-        guard let control else { return }
-        control.setPaused(!control.isPaused)
-        progress?.isPaused = control.isPaused
+    /// Where a job reads and writes: each source, and where each source lands. Flatten and
+    /// Extract pour into the target folder itself, so the whole target is theirs.
+    nonisolated static func footprint(sources: [URL], target: URL, mode: FileOpMode) -> [URL] {
+        var out = sources
+        switch mode {
+        case .standard:
+            out += sources.map { target.appendingPathComponent($0.lastPathComponent) }
+        case .flatten, .extract:
+            out.append(target)
+        }
+        return out
     }
 
-    func cancel() {
-        control?.cancel()
+    /// True when one path is the other, or lies inside it. Compared without regard to case,
+    /// because Mac drives usually ignore it — refusing a harmless pair beats racing a real one.
+    nonisolated static func overlaps(_ a: URL, _ b: URL) -> Bool {
+        func key(_ u: URL) -> String {
+            let p = u.standardizedFileURL.resolvingSymlinksInPath().path.lowercased()
+            return p.hasSuffix("/") ? p : p + "/"
+        }
+        let ka = key(a), kb = key(b)
+        return ka.hasPrefix(kb) || kb.hasPrefix(ka)
     }
 
-    // MARK: - FileOpDelegate — the engine asks, Michael answers
+    private func refusal(for footprint: [URL], kind: FileOpKind) -> FileOpSummary? {
+        for job in jobs {
+            for mine in footprint {
+                if let theirs = job.footprint.first(where: { Self.overlaps(mine, $0) }) {
+                    let busy = theirs.path == "/" ? "an undo" : "“\(theirs.lastPathComponent)”"
+                    return FileOpSummary(kind: kind, failed: [
+                        .init(path: mine.path, reason: "Not started: another \(job.isUndo ? "undo" : job.kind.verb.lowercased()) is already working on \(busy). Start this one after that bar is gone.")])
+                }
+            }
+        }
+        return nil
+    }
 
-    func askFolder(_ question: FolderQuestion) async -> Answer<FolderChoice> {
-        await withCheckedContinuation { reply in
-            folderReply = reply
-            presented = Presented(prompt: .folder(question))
+    // MARK: - One prompt on screen at a time
+
+    /// Put a prompt on screen, or in line behind the one already there.
+    func show(_ prompt: Prompt, for job: FileOperationJob?) {
+        let p = Presented(prompt: prompt, job: job)
+        if current == nil {
+            current = p
+            presented = p
+        } else {
+            waiting.append(p)
         }
     }
 
-    func confirmReplace(_ question: ReplaceConfirm) async -> Bool {
-        await withCheckedContinuation { reply in
-            confirmReply = reply
-            presented = Presented(prompt: .confirm(question))
+    /// A cancelled or finished job's questions leave the line; the others keep their places.
+    func withdrawQuestions(of job: FileOperationJob) {
+        waiting.removeAll { $0.job === job }
+        if let c = current, c.job === job {
+            finishPrompt()
         }
     }
 
-    func askFile(_ question: FileQuestion) async -> Answer<FileChoice> {
-        await withCheckedContinuation { reply in
-            fileReply = reply
-            presented = Presented(prompt: .file(question))
+    /// The prompt on screen is done with. The next one comes up on the next turn, so the
+    /// sheet has a moment to close before it reopens.
+    private func finishPrompt() {
+        current = nil
+        presented = nil
+        guard !waiting.isEmpty else { return }
+        Task { @MainActor [weak self] in
+            guard let self, self.current == nil, !self.waiting.isEmpty else { return }
+            let next = self.waiting.removeFirst()
+            self.current = next
+            self.presented = next
         }
     }
 
-    func askError(_ question: ErrorQuestion) async -> ErrorChoice {
-        await withCheckedContinuation { reply in
-            errorReply = reply
-            presented = Presented(prompt: .error(question))
-        }
-    }
-
-    func askEmptyFolders(_ question: EmptyFoldersQuestion) async -> Bool {
-        await withCheckedContinuation { reply in
-            emptyFoldersReply = reply
-            presented = Presented(prompt: .emptyFolders(question))
-        }
-    }
-
-    func report(_ progress: FileOpProgress) {
-        guard isRunning else { return }
-        self.progress = progress
-    }
-
-    // MARK: - Answers from the sheets
+    // MARK: - Answers from the sheets, routed to the job that asked
 
     func answerFolder(_ choice: FolderChoice, applyToAll: Bool) {
-        presented = nil
-        folderReply?.resume(returning: Answer(choice: choice, applyToAll: applyToAll))
-        folderReply = nil
+        let job = current?.job
+        finishPrompt()
+        job?.answerFolder(choice, applyToAll: applyToAll)
     }
 
     func answerConfirm(_ confirmed: Bool) {
-        presented = nil
-        confirmReply?.resume(returning: confirmed)
-        confirmReply = nil
+        let job = current?.job
+        finishPrompt()
+        job?.answerConfirm(confirmed)
     }
 
     func answerFile(_ choice: FileChoice, applyToAll: Bool) {
-        presented = nil
-        fileReply?.resume(returning: Answer(choice: choice, applyToAll: applyToAll))
-        fileReply = nil
+        let job = current?.job
+        finishPrompt()
+        job?.answerFile(choice, applyToAll: applyToAll)
     }
 
     func answerError(_ choice: ErrorChoice) {
-        presented = nil
-        errorReply?.resume(returning: choice)
-        errorReply = nil
+        let job = current?.job
+        finishPrompt()
+        job?.answerError(choice)
     }
 
     func answerEmptyFolders(remove: Bool) {
-        presented = nil
-        emptyFoldersReply?.resume(returning: remove)
-        emptyFoldersReply = nil
+        let job = current?.job
+        finishPrompt()
+        job?.answerEmptyFolders(remove: remove)
     }
 
     func dismissSummary() {
-        presented = nil
+        finishPrompt()
     }
 
-    /// A sheet went away without a button — answer Cancel so the engine never hangs.
+    /// A sheet went away without a button — answer that job's question the safe way so its
+    /// engine never hangs, then bring up whatever is waiting.
     func sheetDismissed() {
-        // The next question may already be up by the time the old sheet's dismissal
-        // lands — never cancel THAT one.
-        guard presented == nil else { return }
-        if folderReply != nil { answerFolder(.cancel, applyToAll: false) }
-        if confirmReply != nil { answerConfirm(false) }
-        if fileReply != nil { answerFile(.cancel, applyToAll: false) }
-        if errorReply != nil { answerError(.cancel) }
-        if emptyFoldersReply != nil { answerEmptyFolders(remove: false) }   // Leave is the default (7.5)
+        // The next prompt may already be up by the time the old sheet's dismissal lands —
+        // never cancel THAT one.
+        guard presented == nil, let c = current else { return }
+        finishPrompt()
+        c.job?.answerPendingSafely()
     }
 
     // MARK: -

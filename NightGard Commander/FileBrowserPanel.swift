@@ -1867,9 +1867,9 @@ struct FileBrowserPanel: View {
         fileOps.start(kind,
                       sources: items.map { URL(fileURLWithPath: $0.path) },
                       target: URL(fileURLWithPath: otherPanePath)) { _ in
-            selectedItems.removeAll()
-            fileSystem.loadFiles()
-            onRefreshOtherPane()
+            // Only what THIS job took leaves the selection — another copy or move may be
+            // being picked while it ran. Both panes were already refreshed in place.
+            if kind == .move { selectedItems.subtract(items.map(\.id)) }
             if let played = movedPlaying, !FileManager.default.fileExists(atPath: played.path) {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                     playNextTrack(preferredTrackName: nextTrackName)
