@@ -112,7 +112,14 @@ struct ScanForMediaDialog: View {
             case .scanning:
                 scanningView
             case .review:
-                reviewView
+                // Scrolls, so the buttons below keep their place and their margin. His
+                // screen, 2026-09-19: with Organization showing, a whole-drive scan's
+                // review ran out of room — Cancel and Execute sat on the sheet's bottom
+                // edge and the title was pushed against its top.
+                ScrollView {
+                    reviewView
+                        .padding(.horizontal, 2)
+                }
             case .executing:
                 executingView
             case .complete:
@@ -151,9 +158,9 @@ struct ScanForMediaDialog: View {
                     .keyboardShortcut(.defaultAction)
                 }
             }
-            .padding(.top)
+            .padding(.top, 8)
         }
-        .padding()
+        .padding(20)
         .frame(width: 600, height: 700)
         .task {
             await startScanning()
@@ -364,6 +371,8 @@ struct ScanForMediaDialog: View {
                         }
                     }
                     .pickerStyle(.radioGroup)
+                    // The heading above already says it — his screen showed it twice.
+                    .labelsHidden()
                 }
 
                 // Destination folder picker.
@@ -530,10 +539,22 @@ struct ScanForMediaDialog: View {
                 return
             }
             let kind: FileOpKind = (selectedAction == .moveToOtherPane || selectedAction == .moveToMediaLibrary) ? .move : .copy
-            let plan = mediaPlan()
-            let sources = scanner.foundLibraries + scanner.foundFiles
-            fileOps.start(kind, sources: sources, target: URL(fileURLWithPath: destinationPath),
-                          mode: .media(plan)) { _ in onComplete() }
+            // Build 76: one bar per top-level folder, all started at once, each with its
+            // own Pause and Cancel — his spec: "i want to see individual status bars so i
+            // can pause or cancel individual status bars" · "all at once but i can pause
+            // them". They share one name registry, so two bars never claim one name.
+            let roots = sourceFolders.map { URL(fileURLWithPath: $0.path) }
+            let libraries = Set(scanner.foundLibraries.map { $0.standardizedFileURL.path })
+            let group = UUID()
+            let claims = TargetClaims()
+            let target = URL(fileURLWithPath: destinationPath)
+            for part in MediaPlan.groups(of: scanner.foundLibraries + scanner.foundFiles, roots: roots) {
+                let libs = part.sources.filter { libraries.contains($0.standardizedFileURL.path) }
+                let files = part.sources.filter { !libraries.contains($0.standardizedFileURL.path) }
+                fileOps.start(kind, sources: libs + files, target: target,
+                              mode: .media(mediaPlan(files: files, libraries: libs)),
+                              title: part.name, group: group, sharedTargets: claims) { _ in onComplete() }
+            }
             isPresented = false
             return
         }
@@ -555,7 +576,7 @@ struct ScanForMediaDialog: View {
     }
 
     /// Where each scanned file goes — the rules live in `MediaPlan.build`, shared with the tests.
-    private func mediaPlan() -> MediaPlan {
+    private func mediaPlan(files: [URL], libraries: [URL]) -> MediaPlan {
         let sorting: MediaPlan.Sorting
         switch selectedOrganization {
         case .flatten: sorting = .flatten
@@ -563,7 +584,7 @@ struct ScanForMediaDialog: View {
         case .byMediaType: sorting = .byType
         case .byMediaTypeThenExtension: sorting = .byTypeThenExtension
         }
-        return MediaPlan.build(files: scanner.foundFiles, libraries: scanner.foundLibraries, sorting: sorting)
+        return MediaPlan.build(files: files, libraries: libraries, sorting: sorting)
     }
 
     private func addToPlaylist() async {

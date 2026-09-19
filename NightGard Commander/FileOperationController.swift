@@ -58,6 +58,12 @@ final class FileOperationController {
     /// Every copy or move still running, oldest first — one progress bar each.
     private(set) var jobs: [FileOperationJob] = []
     var isRunning: Bool { !jobs.isEmpty }
+    /// Pauses bars while the Mac is unstable and resumes them one at a time (build 76).
+    let governor = JobGovernor()
+
+    init() {
+        governor.controller = self
+    }
 
     /// Show a folder in a pane — the summary's "Show" buttons. Set by ContentView.
     var onReveal: ((URL) -> Void)?
@@ -72,17 +78,23 @@ final class FileOperationController {
 
     // MARK: - Start
 
+    /// `title`, `group` and `sharedTargets` are for bars started together from one scan
+    /// (build 76): each is named after its folder, and they share one name registry.
     func start(_ kind: FileOpKind, sources: [URL], target: URL, mode: FileOpMode = .standard,
+               title: String? = nil, group: UUID? = nil, sharedTargets: TargetClaims? = nil,
                onFinish: ((FileOpSummary) -> Void)? = nil) {
         guard !sources.isEmpty else { return }
         let footprint = Self.footprint(sources: sources, target: target, mode: mode)
-        if let refusal = refusal(for: footprint, kind: kind) {
+        if let refusal = refusal(for: footprint, kind: kind, group: group) {
             show(.summary(refusal), for: nil)
             return
         }
         let job = FileOperationJob(kind: kind, mode: mode, isUndo: false, footprint: footprint)
+        job.title = title
+        job.group = group
         let engine = FileOperationEngine(kind: kind, sources: sources, targetDir: target,
-                                         control: job.control, delegate: job, mode: mode)
+                                         control: job.control, delegate: job, mode: mode,
+                                         sharedTargets: sharedTargets)
         begin(job, sources: sources, target: target, onFinish: onFinish) { await engine.run() }
     }
 
@@ -163,6 +175,7 @@ final class FileOperationController {
         job.sources = sources
         job.target = target
         jobs.append(job)
+        governor.startIfNeeded()
         Task { [weak self] in
             var summary = await work()
             guard let self else { return }
@@ -205,8 +218,8 @@ final class FileOperationController {
         return ka.hasPrefix(kb) || kb.hasPrefix(ka)
     }
 
-    private func refusal(for footprint: [URL], kind: FileOpKind) -> FileOpSummary? {
-        for job in jobs {
+    private func refusal(for footprint: [URL], kind: FileOpKind, group: UUID? = nil) -> FileOpSummary? {
+        for job in jobs where group == nil || job.group != group {
             for mine in footprint {
                 if let theirs = job.footprint.first(where: { Self.overlaps(mine, $0) }) {
                     let busy = theirs.path == "/" ? "an undo" : "“\(theirs.lastPathComponent)”"

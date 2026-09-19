@@ -732,9 +732,23 @@ struct FileOperationProgressBar: View {
                 if p.phase == .transferring, p.bytesTotal > 0 || p.secondsLeft != nil {
                     Text(detail(p)).font(.caption).foregroundStyle(.secondary)
                 }
+                // His spec: "the pause warning should be on each status bar".
+                if let warning = governorLine() {
+                    Label(warning, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
             }
-            Button(p.isPaused ? "Resume" : "Pause") { job.togglePause() }
-                .disabled(p.phase != .transferring && p.phase != .buildingFolders)
+            if job.governorPausedFor != nil {
+                // "the user can override and resumw at their own rish"
+                Button("Resume at Your Own Risk") { job.togglePause() }
+                    .help("Runs this one while the Mac is unstable. It will not be paused again for the same reason — only for a new one.")
+            } else {
+                Button(p.isPaused ? "Resume" : "Pause") { job.togglePause() }
+                    .disabled(p.phase != .transferring && p.phase != .buildingFolders)
+            }
             Button("Cancel") { job.cancel() }
                 .help("Stops this one after the current file. Nothing half-copied is left behind. Any other copy or move carries on.")
         }
@@ -754,7 +768,23 @@ struct FileOperationProgressBar: View {
         }
     }
 
+    /// The governor's word on this bar, or nil when the Mac is stable.
+    private func governorLine() -> String? {
+        if let reasons = job.governorPausedFor {
+            return "System unstable — \(reasons.map(\.text).joined(separator: " · ")). Paused until it is stable again."
+        }
+        guard let governor = job.owner?.governor, governor.isUnstable else { return nil }
+        let overridden = governor.conditions.filter { job.overridden.contains($0.key) }
+        guard !overridden.isEmpty, !job.progress.isPaused else { return nil }
+        return "System unstable — \(overridden.map(\.text).joined(separator: " · ")). Running at your own risk."
+    }
+
     private func line(_ p: FileOpProgress) -> String {
+        if let title = job.title { return "\(title) — \(lineBody(p))" }
+        return lineBody(p)
+    }
+
+    private func lineBody(_ p: FileOpProgress) -> String {
         let verb: String
         switch job.mode {
         case .flatten: verb = job.kind == .move ? "Flattening (moving)" : "Flattening (copying)"
@@ -804,5 +834,46 @@ struct FileOperationProgressBar: View {
             parts.append("estimating time left…")
         }
         return parts.joined(separator: " · ")
+    }
+}
+
+// MARK: - The overall bar (build 76)
+
+/// Every task Commander is running, in one line under the bars — his spec, 2026-09-18:
+/// "that iser feedback bar at the bottom that tells the user comprehensively what tasks
+/// are running in the commander".
+struct FileOperationOverallBar: View {
+    let controller: FileOperationController
+
+    var body: some View {
+        let governor = controller.governor
+        HStack(spacing: 8) {
+            Image(systemName: governor.isUnstable ? "exclamationmark.triangle.fill" : "square.stack.3d.up")
+                .foregroundStyle(governor.isUnstable ? Color.orange : Color.secondary)
+            Text(summary(governor))
+                .font(.caption)
+                .lineLimit(1)
+                .truncationMode(.tail)
+            Spacer()
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 5)
+        .background(governor.isUnstable ? Color.orange.opacity(0.12) : Color.secondary.opacity(0.06))
+    }
+
+    private func summary(_ governor: JobGovernor) -> String {
+        let jobs = controller.jobs
+        var counts: [(String, Int)] = []
+        func add(_ label: String, _ n: Int) { if n > 0 { counts.append((label, n)) } }
+        let running = jobs.filter { !$0.progress.isPaused }
+        add("copying", running.filter { $0.kind == .copy }.count)
+        add("moving", running.filter { $0.kind == .move }.count)
+        add("deleting", running.filter { $0.kind == .delete }.count)
+        add("paused by the governor", jobs.filter { $0.governorPausedFor != nil }.count)
+        add("paused by you", jobs.filter { $0.progress.isPaused && $0.governorPausedFor == nil }.count)
+        var text = "\(jobs.count) \(jobs.count == 1 ? "task" : "tasks")"
+        if !counts.isEmpty { text += " — " + counts.map { "\($0.1) \($0.0)" }.joined(separator: ", ") }
+        if governor.isUnstable { text += " · System unstable: \(governor.reasonText)" }
+        return text
     }
 }

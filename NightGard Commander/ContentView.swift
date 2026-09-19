@@ -502,8 +502,27 @@ struct ContentView: View {
 
             // Copies and moves in progress — one bar each, several at once (his spec,
             // 2026-09-18). Browsing, and starting another, carry on underneath them.
-            ForEach(fileOps.jobs) { job in
-                FileOperationProgressBar(job: job)
+            // Build 76: a scan starts one bar per top-level folder, so there can be many.
+            // Past three they scroll, so the bars can never crush the panes — last night
+            // four of them pushed the list down to one row.
+            if fileOps.jobs.count > 3 {
+                ScrollView {
+                    VStack(spacing: 0) {
+                        ForEach(fileOps.jobs) { job in
+                            FileOperationProgressBar(job: job)
+                            Divider()
+                        }
+                    }
+                }
+                .frame(height: 230)
+            } else {
+                ForEach(fileOps.jobs) { job in
+                    FileOperationProgressBar(job: job)
+                    Divider()
+                }
+            }
+            if fileOps.isRunning {
+                FileOperationOverallBar(controller: fileOps)
                 Divider()
             }
 

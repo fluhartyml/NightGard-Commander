@@ -131,8 +131,13 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
     /// skipped instead of producing an error prompt per file.
     private var failedFolders: [String] = []
 
+    /// Build 76: the names planned by every bar started from the same scan. Nil for a job
+    /// running on its own.
+    private let sharedTargets: TargetClaims?
+
     init(kind: FileOpKind, sources: [URL], targetDir: URL, control: FileOpControl,
-         delegate: any FileOpDelegate, mode: FileOpMode = .standard) {
+         delegate: any FileOpDelegate, mode: FileOpMode = .standard, sharedTargets: TargetClaims? = nil) {
+        self.sharedTargets = sharedTargets
         self.kind = kind
         self.mode = mode
         self.sources = sources.map { $0.standardizedFileURL }
@@ -147,6 +152,7 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
 
     /// Undo a logged Move: everything goes back where it came from.
     init(undoing log: OperationLog, control: FileOpControl, delegate: any FileOpDelegate) {
+        self.sharedTargets = nil
         self.kind = .move
         self.mode = .standard
         self.sources = []
@@ -535,7 +541,12 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
                                    claimed: inout [String: URL], in folder: URL? = nil) async throws -> URL? {
         var dst = (folder ?? targetDir).appendingPathComponent(name)
         let inTarget = exists(dst)
-        let incoming = claimed[dst.path]
+        var incoming = claimed[dst.path]
+        // Build 76: a sibling bar from the same scan may already have planned this name.
+        // Claiming is one locked step, so two bars can never both find it free.
+        if !inTarget, incoming == nil, let other = sharedTargets?.claim(dst.path, for: src) {
+            incoming = other
+        }
         if inTarget || incoming != nil {
             remaining = max(0, remaining - 1)
             var choice = flattenForAll
@@ -553,7 +564,7 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
             case .cancel:
                 throw FileOpCancelled()
             case .keepBoth:
-                dst = uniqueName(for: dst)
+                dst = uniqueName(for: dst, claimant: src)
             default:
                 skip(src, inTarget ? "A file named “\(name)” is already in the target — you chose Skip."
                                    : "Another file named “\(name)” is coming from a different folder — you chose Skip.")
@@ -1663,7 +1674,8 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
         }
     }
 
-    private func uniqueName(for dst: URL) -> URL {
+    /// `claimant` also claims the new name among sibling bars (build 76).
+    private func uniqueName(for dst: URL, claimant: URL? = nil) -> URL {
         let folder = dst.deletingLastPathComponent()
         let ext = dst.pathExtension
         let base = ext.isEmpty ? dst.lastPathComponent : dst.deletingPathExtension().lastPathComponent
@@ -1671,7 +1683,8 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
         while true {
             let name = ext.isEmpty ? "\(base) \(n)" : "\(base) \(n).\(ext)"
             let candidate = folder.appendingPathComponent(name)
-            if !exists(candidate) && !plannedTargets.contains(candidate.path) {
+            if !exists(candidate) && !plannedTargets.contains(candidate.path)
+                && (claimant.flatMap { sharedTargets?.claim(candidate.path, for: $0) } == nil) {
                 plannedTargets.insert(candidate.path)
                 return candidate
             }

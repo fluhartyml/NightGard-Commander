@@ -124,6 +124,65 @@ nonisolated struct MediaPlan: Sendable, Equatable {
         }
         return plan
     }
+
+    /// One bar per top-level folder — his spec, 2026-09-19: "i want to see individual
+    /// status bars so i can pause or cancel individual status bars i am thinkink they
+    /// should be distributed among originating parent folders" · "not of each file like
+    /// apple music organizes one mp3 per folder, i want the parent music folder".
+    ///
+    /// So a file or library is grouped by the FIRST folder under the scanned root it lies
+    /// in ("Music", "Backup"), never by the folder it sits in directly. Anything lying
+    /// loose in the root itself gets a group named after the root. Finder's order (2
+    /// before 10), so the bars read in the order the drive does.
+    static func groups(of sources: [URL], roots: [URL]) -> [(name: String, sources: [URL])] {
+        let rootPaths = roots.map { $0.standardizedFileURL.path }
+            .sorted { $0.count > $1.count }   // deepest first, so nested roots win
+        var order: [String] = []
+        var byKey: [String: (name: String, sources: [URL])] = [:]
+        for src in sources {
+            let path = src.standardizedFileURL.path
+            var key = ""
+            var name = ""
+            if let root = rootPaths.first(where: { path.hasPrefix($0 == "/" ? "/" : $0 + "/") }) {
+                let rest = path.dropFirst(root == "/" ? 1 : root.count + 1).split(separator: "/")
+                if rest.count >= 2 {
+                    key = (root as NSString).appendingPathComponent(String(rest[0]))
+                    name = String(rest[0])
+                } else {
+                    key = root
+                    name = (root as NSString).lastPathComponent
+                }
+            } else {
+                key = src.deletingLastPathComponent().standardizedFileURL.path
+                name = (key as NSString).lastPathComponent
+            }
+            if byKey[key] == nil {
+                order.append(key)
+                byKey[key] = (name.isEmpty ? "/" : name, [])
+            }
+            byKey[key]!.sources.append(src)
+        }
+        return order.compactMap { byKey[$0] }
+            .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
+}
+
+/// Jobs started together from one Scan for Media write into the SAME shelves (Audio/MP3,
+/// Photos/…), each on its own thread. Every target name any of them plans is claimed here
+/// first, so two bars can never pick the same free name at once — the second is asked
+/// Skip or Keep Both, exactly as if both files had come through one bar.
+nonisolated final class TargetClaims: @unchecked Sendable {
+    private let lock = NSLock()
+    private var owners: [String: URL] = [:]
+
+    /// Claims `path` for `source`. Nil when it is now this source's; otherwise the source
+    /// another bar already planned there.
+    func claim(_ path: String, for source: URL) -> URL? {
+        lock.lock(); defer { lock.unlock() }
+        if let owner = owners[path], owner != source { return owner }
+        owners[path] = source
+        return nil
+    }
 }
 
 /// 7.9 — his ask: "i would choose jpg but maybe a printshop uses png or another format".

@@ -31,6 +31,22 @@ final class FileOperationJob: Identifiable, FileOpDelegate {
     /// What it is working on and where to — for "Show in Finder" on its bar.
     var sources: [URL] = []
     var target: URL?
+    /// The folder a Scan for Media bar is working on ("Music", "Backup") — build 76, one
+    /// bar per top-level folder. Nil for an ordinary copy or move.
+    var title: String?
+    /// Bars started together from one scan share a group. They write into the same
+    /// shelves on purpose, so they are not refused as overlapping EACH OTHER — the name
+    /// registry they share keeps them apart instead. Anything else still is.
+    var group: UUID?
+
+    // MARK: Governor state — build 76, his spec 2026-09-18
+    /// He pressed Pause. ⛔ The governor never resumes a pause HE made.
+    private(set) var pausedByUser = false
+    /// The conditions the governor paused this bar for. Nil when it did not.
+    private(set) var governorPausedFor: [JobGovernor.Condition]?
+    /// Conditions he chose to run through anyway — "the user can override and resumw at
+    /// their own rish". The governor does not pause this bar again for the same ones.
+    @ObservationIgnored private(set) var overridden = Set<String>()
 
     private(set) var progress = FileOpProgress()
     /// True while one of this job's questions is on screen or waiting its turn.
@@ -55,9 +71,40 @@ final class FileOperationJob: Identifiable, FileOpDelegate {
 
     // MARK: - Pause / cancel (this job only)
 
+    /// His button. On a bar the governor paused it is "Resume at Your Own Risk": it runs,
+    /// and the governor leaves it alone for the conditions it was paused for.
     func togglePause() {
-        control.setPaused(!control.isPaused)
-        progress.isPaused = control.isPaused
+        if let reasons = governorPausedFor {
+            overridden.formUnion(reasons.map(\.key))
+            governorPausedFor = nil
+            pausedByUser = false
+            setPaused(false)
+        } else if control.isPaused {
+            pausedByUser = false
+            setPaused(false)
+        } else {
+            pausedByUser = true
+            setPaused(true)
+        }
+    }
+
+    /// The governor's pause — only ever on a bar that is running and not already paused.
+    func governorPause(for conditions: [JobGovernor.Condition]) {
+        guard !pausedByUser, !control.isCancelled else { return }
+        governorPausedFor = conditions
+        setPaused(true)
+    }
+
+    /// The governor's resume — only of a pause the governor made.
+    func governorResume() {
+        guard governorPausedFor != nil, !pausedByUser else { return }
+        governorPausedFor = nil
+        setPaused(false)
+    }
+
+    private func setPaused(_ value: Bool) {
+        control.setPaused(value)
+        progress.isPaused = value
     }
 
     /// Stops after the current file. A question it was waiting on is answered Cancel, and

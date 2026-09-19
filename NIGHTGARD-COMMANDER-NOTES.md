@@ -452,3 +452,36 @@ His report: *"im trying to use spacebar and it wont let me"* — renaming "Devel
 never reached the text box: the pane took it as Play/Pause. The same was true of ↑ ↓ ← → and **m**, and
 **m MOVES the selected file to the other pane** — a letter typed into a name could have started a move.
 All six now step aside (`.ignored`) while a rename is in progress, like Return already did (2026-09-11).
+
+## Build 76 — one bar per top-level folder, and the governor (2026-09-19)
+
+**His spec:** *"i want to see individual status bars so i can pause or cancel individual status bars i
+am thinkink they should be distributed among originating parent folders"* · *"not of each file like apple
+music organizes one mp3 per folder, i want the parent music folder"* · *"all at once but i can pause them,
+build 76 and the govoner can and gives stability warnings as discussed last night"*.
+
+- **Scan for Media → one bar per top-level folder** under the scanned folder or drive (`MediaPlan.groups`):
+  Music, Backup, Users… — never one per album. Loose files in the root get a bar named after the root.
+  All start at once; each bar carries its folder's name and its own Pause and Cancel.
+- **Sibling bars share one name registry** (`TargetClaims`), because they write into the same shelves.
+  ⭐ **The negative control proved it was needed:** without it, two bars each planning `Audio/MP3/song.mp3`
+  **silently overwrote one file with the other on the Raid — no question, no error.** With it: one
+  Skip / Keep Both question, both kept, 10 runs of 10 on the Mac drive and the Raid.
+  Bars from one scan are not refused as overlapping each other; anything else still is.
+- **The governor (`JobGovernor.swift`)** — the 09-18 spec above, item 3:
+  - Pauses bars with their own Pause; each paused bar says *"System unstable — … Paused until it is stable
+    again."* Resumes them **one at a time**, each after 10 s of steady.
+  - ⛔ **Never resumes a pause he made.**
+  - **Resume at Your Own Risk** runs a bar anyway; it is not paused again for the same reason, only a new one.
+  - **The overall bar** under the bars: "5 tasks — 3 copying, 2 paused by the governor · System unstable: …".
+  - ⬜ **"Unstable" is Claude's pick, his to change:** memory pressure warning/critical · thermal serious/
+    critical · battery ≤ 10% unplugged · a bar's target drive under 2 GB free (pauses only bars writing
+    there). A network drive that stopped answering is NOT included (a check on a dead share can hang).
+- **More than three bars scroll** in a 230-pt strip, so they can no longer crush the panes.
+- **Scan sheet layout, from his screen:** Cancel/Execute sat on the sheet's bottom edge and the title was
+  pushed to the top once Organization showed; "Organization" appeared twice. The review now scrolls and
+  the buttons keep their margin; the duplicate label is gone.
+- ⚠️ Each bar still pops its own summary when it finishes — several summaries, one at a time.
+- Tests: new build-76 suite ALL PASSED (grouping, siblings ×10 on Mac drive + Raid, governor 13 checks);
+  engine suite Mac→Raid ALL PASSED (73); media suite ALL PASSED (35). The engine suite's Mac→Mac run fails
+  the same 8 checks on build 75's engine — it needs a target on another drive; not a regression.
