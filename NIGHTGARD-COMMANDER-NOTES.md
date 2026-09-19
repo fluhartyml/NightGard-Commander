@@ -546,3 +546,14 @@ deleting and keeps the source (test 10). Tests: build-77 suite (10 scenarios) AL
 engine 73 and media 35 ALL PASSED.
 ⬜ Offered, not answered: an MP3 Merge that compares only the audio and ignores tags (his Bob Sinclar pair:
 same size ±1 KB, 2005 vs 2015 dates) · removing the do-same box next to Keep This One / Keep the Other One.
+
+## Build 82 — Cancel on a scan's question is a full stop (2026-09-19)
+His words: *"i press cancel once … and the same popup maybe different content pops up cancel should be
+full dtop"*. Cancel only stopped the bar that asked; the next bar's queued question came up. Now, on a question
+from a scan's bar, the button reads **Cancel All**: every bar from that scan is cancelled, their queued
+questions leave the line, and bars stopped this way that moved nothing show no summary of their own (one
+closing summary). Files already moved stay moved. Error popups' Cancel does the same. A plain Copy/Move
+still has a single Cancel. Tested through the real controller: 3 bars, one Cancel → all ended, no further
+question, sources intact.
+⬜ Still waiting on him (asked 13:2x): videos keep their source folder or sort by type · remove the 5,440
+empty folders under Media/Photos on Cold Storage · then build "one media type per scan, photos flat".

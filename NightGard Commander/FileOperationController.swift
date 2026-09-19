@@ -188,7 +188,8 @@ final class FileOperationController {
             self.onDiskChanged?()
             job.onFinish?(summary)
             job.onFinish = nil
-            self.show(.summary(summary), for: nil)
+            let nothingToSay = job.stoppedBySibling && summary.filesTransferred == 0 && summary.failed.isEmpty
+            if !nothingToSay { self.show(.summary(summary), for: nil) }
         }
     }
 
@@ -268,8 +269,24 @@ final class FileOperationController {
 
     // MARK: - Answers from the sheets, routed to the job that asked
 
+    /// Build 82: the question on screen came from a bar started by a scan.
+    var presentedIsGrouped: Bool { presented?.job?.group != nil }
+
+    /// Build 82 — Cancel on a scan's question is a FULL STOP. His words: "i press cancel once
+    /// … and the same popup maybe different content pops up cancel should be full dtop".
+    /// Every other bar from the same scan is cancelled first, so its waiting questions leave
+    /// the line and never come up; then the asking bar gets its Cancel.
+    private func stopSiblings(of job: FileOperationJob?) {
+        guard let job, let group = job.group else { return }
+        for other in jobs where other !== job && other.group == group {
+            other.stoppedBySibling = true
+            other.cancel()
+        }
+    }
+
     func answerFolder(_ choice: FolderChoice, applyToAll: Bool) {
         let job = current?.job
+        if choice == .cancel { stopSiblings(of: job) }
         finishPrompt()
         job?.answerFolder(choice, applyToAll: applyToAll)
     }
@@ -282,12 +299,14 @@ final class FileOperationController {
 
     func answerFile(_ choice: FileChoice, applyToAll: Bool) {
         let job = current?.job
+        if case .cancel = choice { stopSiblings(of: job) }
         finishPrompt()
         job?.answerFile(choice, applyToAll: applyToAll)
     }
 
     func answerError(_ choice: ErrorChoice) {
         let job = current?.job
+        if case .cancel = choice { stopSiblings(of: job) }
         finishPrompt()
         job?.answerError(choice)
     }

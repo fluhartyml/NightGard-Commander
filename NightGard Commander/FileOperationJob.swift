@@ -38,6 +38,9 @@ final class FileOperationJob: Identifiable, FileOpDelegate {
     /// shelves on purpose, so they are not refused as overlapping EACH OTHER — the name
     /// registry they share keeps them apart instead. Anything else still is.
     var group: UUID?
+    /// Build 82: stopped by Cancel All on a sibling's question. If it moved nothing and hit
+    /// nothing, its own summary is not shown — he already said stop.
+    var stoppedBySibling = false
 
     // MARK: Governor state — build 76, his spec 2026-09-18
     /// He pressed Pause. ⛔ The governor never resumes a pause HE made.

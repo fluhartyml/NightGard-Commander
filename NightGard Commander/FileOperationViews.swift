@@ -195,10 +195,16 @@ private struct CardThumbnail: View {
 }
 
 private struct CancelRow: View {
+    /// Build 82: the question came from a bar started by a scan — Cancel stops them ALL.
+    var grouped = false
     let action: () -> Void
     var body: some View {
-        ChoiceRow(title: "Cancel",
-                  explanation: "Stop here. Nothing has been changed yet — every question is asked before anything moves.",
+        ChoiceRow(title: grouped ? "Cancel All" : "Cancel",
+                  explanation: grouped
+                    // His words, 2026-09-19: "i press cancel once … and the same popup maybe
+                    // different content pops up cancel should be full dtop".
+                    ? "Full stop: every bar from this scan stops, and no more questions come up. Files already moved stay moved; everything else stays where it is. Nothing half-copied is left."
+                    : "Stop here. Nothing has been changed yet — every question is asked before anything moves.",
                   action: action)
             .keyboardShortcut(.cancelAction)
     }
@@ -234,7 +240,7 @@ private struct FolderQuestionView: View {
                 Toggle("Do the same for the \(Fmt.plural(question.remainingLikeThis, "other folder")) that \(question.remainingLikeThis == 1 ? "clashes" : "clash")", isOn: $applyToAll)
             }
             Divider()
-            CancelRow { controller.answerFolder(.cancel, applyToAll: false) }
+            CancelRow(grouped: controller.presentedIsGrouped) { controller.answerFolder(.cancel, applyToAll: false) }
         }
     }
 }
@@ -334,7 +340,7 @@ private struct FileQuestionView: View {
                 Toggle(applyToAllLabel, isOn: $applyToAll)
             }
             Divider()
-            CancelRow { controller.answerFile(.cancel, applyToAll: false) }
+            CancelRow(grouped: controller.presentedIsGrouped) { controller.answerFile(.cancel, applyToAll: false) }
         }
     }
 
@@ -545,7 +551,10 @@ private struct ErrorQuestionView: View {
             ChoiceRow(title: "Retry", explanation: "Try this item again.", isDefault: true) { controller.answerError(.retry) }
             ChoiceRow(title: "Skip", explanation: "Leave this item where it is and carry on with the rest.") { controller.answerError(.skip) }
             ChoiceRow(title: "Skip All", explanation: "Carry on, and skip anything else that fails without asking. Every skipped item is listed at the end.") { controller.answerError(.skipAll) }
-            ChoiceRow(title: "Cancel", explanation: "Stop now. What is already done stays done; nothing half-copied is left behind.") { controller.answerError(.cancel) }
+            ChoiceRow(title: controller.presentedIsGrouped ? "Cancel All" : "Cancel",
+                      explanation: controller.presentedIsGrouped
+                        ? "Full stop: every bar from this scan stops. What is already done stays done; nothing half-copied is left behind."
+                        : "Stop now. What is already done stays done; nothing half-copied is left behind.") { controller.answerError(.cancel) }
                 .keyboardShortcut(.cancelAction)
         }
     }
