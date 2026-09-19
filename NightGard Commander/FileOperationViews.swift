@@ -112,6 +112,11 @@ private struct SideBySide: View {
                 Text(f.name).font(.headline).lineLimit(2)
             }
             Text("in “\(Fmt.folderName(f.url))”").font(.callout).foregroundStyle(.secondary)
+            // His ask, 2026-09-19: "can it have show in finder so i can see each and play if
+            // needed?" — Finder opens with this one selected; Space plays or previews it.
+            Button("Show in Finder") { FinderReveal.show([f.url.path]) }
+                .controlSize(.small)
+                .help("Opens Finder with this one selected. Press Space there to play or preview it.")
             if !f.isDirectory || f.isPackage {
                 HStack(spacing: 6) {
                     Text(Fmt.size(f.size))

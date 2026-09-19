@@ -516,3 +516,8 @@ files, hy cant you choose the one to be saved?"*
   moved its copy away mid-read. Now re-compared against the copy that just landed.
 - Tests: build-77 suite (9 scenarios) ALL PASSED ×4 on Mac drive + Raid; build-76 suite ALL PASSED ×3
   (it caught the partial-sweep bug); engine Mac→Raid 73 ALL PASSED; media 35 ALL PASSED.
+
+## Build 78 — Show in Finder on each card of a clash popup (2026-09-19)
+His ask: *"can it have show in finder so i can see each and play if needed?"* — every side-by-side card
+(file and folder questions) has a small **Show in Finder**; Finder opens with that one selected, Space plays
+or previews it. The popup stays up. Display only; engine untouched.
