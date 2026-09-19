@@ -359,3 +359,11 @@ more folders between using the same two panes without leaving them on the same t
      An overridden job is not re-paused by the governor for the same condition.
 4. **Resizable panes** — *"can these panes be resized?"* No: fixed halves, and four bars took the bottom
    half of the window. Offered: a draggable divider and bars that fold to one line.
+
+## ⬜ FOR THE MORNING — his words, 2026-09-18 ~22:2x
+***"the move status bars pushed the pane up so far 50% of the pane looks like icon view. it needs to be
+adjustable in the morning"***
+Cause: `PanePreview` is sized `containerRelativeFrame(.vertical) { height * 0.4 }` — 40% of the WINDOW,
+not the pane. Four progress bars shrank the panes; the preview kept its size and the list fell to one row.
+Fix wanted: an **adjustable** split between list and preview (drag), sized from the pane itself. Goes with
+item 4 above (draggable pane divider, bars that fold to one line).
