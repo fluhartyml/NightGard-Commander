@@ -341,5 +341,13 @@ more folders between using the same two panes without leaving them on the same t
    confirm was found. Cold Storage (SMB) has no Trash regardless. **Not directed; ask before changing.**
 3. **A governor** — *"is there a govoner or regulator to keep the mac stable?"* None exists; four jobs ran
    at once. Offered: at most 2 running, the rest wait in line, each with an X (his queue condition).
+   **His refinement, 21:4x:** he paused all four and resumed them one at a time — *"this pause is cool
+   because i can pause them all and let them resume one at a time"* — and then: ***"it needs to say
+   system unstable; paused untill system becomes stable again or similar"***.
+   So the governor PAUSES jobs itself (the existing Pause, not a new mechanism) and the bar says why, e.g.
+   "System unstable — paused until it is stable again", resuming them one at a time when it clears.
+   ⬜ "Unstable" still to be defined with him — candidates macOS reports directly: memory pressure,
+   `ProcessInfo.thermalState` (serious/critical), low battery off power, a drive nearly full, a network
+   drive that stopped answering. A pause HE made must never be auto-resumed.
 4. **Resizable panes** — *"can these panes be resized?"* No: fixed halves, and four bars took the bottom
    half of the window. Offered: a draggable divider and bars that fold to one line.
