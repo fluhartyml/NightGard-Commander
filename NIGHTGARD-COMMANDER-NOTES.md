@@ -434,3 +434,10 @@ folder why cant i?"* · *"i want add and move to media library options added ple
   "just move the selected file or folder"; the sorting question was asked and not answered).
 - A normal job: bar, Pause, clash questions, read-back check, move log. Greyed out, with the reason in the
   label, when nothing is designated or its drive is not connected.
+
+## Build 73 — the popup's Show is now "Show in Finder" (2026-09-19)
+His question: *"what is show button do? i pressed it to show me the finder or something and it didnt do
+anything"*. It moved a pane to the item's parent folder — usually the folder the pane already showed, so
+nothing visibly happened. Asked what he'd suggest, Claude recommended Finder; he said *"yes build 73"*.
+Now: **Show in Finder** opens Finder with the item selected (its folder, if the item is gone).
+`controller.onReveal` is no longer used by the popup; left in place.

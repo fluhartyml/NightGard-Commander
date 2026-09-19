@@ -660,8 +660,16 @@ private struct SummaryView: View {
                         // deleted item it opened the parent folder the pane already showed.
                         // Nothing left to show, so no button; a failed delete still has one.
                         if summary.kind != .delete || FileManager.default.fileExists(atPath: item.path) {
-                        Button("Show") {
-                            controller.onReveal?(URL(fileURLWithPath: item.path).deletingLastPathComponent())
+                        // Build 73 — his question, 2026-09-19: "what is show button do? i pressed
+                        // it to show me the finder or something and it didnt do anything". It
+                        // moved a pane to the parent folder, which the pane was usually already
+                        // showing. Now it says Finder and opens Finder, with the item selected.
+                        Button("Show in Finder") {
+                            if FileManager.default.fileExists(atPath: item.path) {
+                                FinderReveal.show([item.path])
+                            } else {
+                                FinderReveal.open(folder: (item.path as NSString).deletingLastPathComponent)
+                            }
                         }
                         }
                     }
