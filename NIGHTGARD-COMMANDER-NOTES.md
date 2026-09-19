@@ -584,3 +584,11 @@ database) are extracted and always copied; **loose photos follow Move / Copy lik
 Tested with his scenario — a tree inside the media folder scanned and moved to the media folder: audio lands
 in Audio/MP3/, the loose photo MOVES to Photos/ (83 left a copy behind). Only empty folders remain
 (Old Rips/Album A/Disc 2) — removing them is offered to him, not built. All suites ALL PASSED.
+
+## Build 85 — Keep the Other One for library photos too (2026-09-19)
+His: *"keep both and replace were not both there because you said to use skip"*. On a library-photo pair the
+popup had only Keep Both / Skip (79) — every choice that could remove a library photo was hidden. Now a pair
+that differs also offers **Keep the Other One**; for a library photo it means "do not bring this one in" and
+**nothing inside a Photos library is ever deleted** (tested: every original still in the library, one
+IMG_0001.JPG kept). Identical pairs: Merge. All suites ALL PASSED. His next step: *"we will see during the
+shake down."*

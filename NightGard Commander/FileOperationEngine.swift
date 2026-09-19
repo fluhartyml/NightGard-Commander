@@ -616,7 +616,9 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
             // which the popup says.
             let mergeOK = bothFiles && identical
             let replaceOK = onMove && !identical
-            let keepOtherOK = onMove && !identical && srcMoves
+            // Build 85 — his: "keep both and replace were not both there". Offered for a library
+            // photo too; for one it means "do not bring this one in", and it stays in its library.
+            let keepOtherOK = onMove && !identical
 
             func offered(_ c: FileChoice) -> Bool {
                 switch c {
@@ -664,7 +666,13 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
                 }
                 return nil
             case .keepOther:
-                ops.append(.retire(src: src, landedAt: dst, identical: false, owner: owner))
+                if srcMoves {
+                    ops.append(.retire(src: src, landedAt: dst, identical: false, owner: owner))
+                } else {
+                    // ⛔ Never delete from inside a Photos library (or a guarded folder): the
+                    // other one is kept, this one is simply not brought in and stays put.
+                    skip(src, "Not brought in — you kept the other “\(name)”. This one stays where it is, inside its Photos library.")
+                }
                 return nil
             case .replace:
                 if inTarget {

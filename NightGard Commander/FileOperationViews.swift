@@ -422,7 +422,9 @@ private struct FileQuestionView: View {
         if question.keepOtherOffered {
             ChoiceRow(title: question.targetIsIncoming ? "Keep the Other One" : "Keep the One Already Here",
                       explanation: question.targetIsIncoming
-                        ? "Keep the one from “\(Fmt.folderName(question.target.url))” (\(Fmt.size(question.target.size))). The one from “\(Fmt.folderName(question.source.url))” goes to the Trash once the other has landed."
+                        ? (question.sourceStays
+                            ? "Keep the one from “\(Fmt.folderName(question.target.url))” (\(Fmt.size(question.target.size))). This one is not brought in; it stays inside its Photos library — nothing there is ever deleted."
+                            : "Keep the one from “\(Fmt.folderName(question.target.url))” (\(Fmt.size(question.target.size))). The one from “\(Fmt.folderName(question.source.url))” goes to the Trash once the other has landed.")
                         : "Keep the one already here (\(Fmt.size(question.target.size))). The one from “\(Fmt.folderName(question.source.url))” goes to the Trash.",
                       role: .destructive) { controller.answerFile(.keepOther, applyToAll: applyToAll) }
         }
