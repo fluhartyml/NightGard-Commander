@@ -39,8 +39,24 @@ class MediaScanner {
     @ObservationIgnored private let flag = CancelFlag()
 
     // Media file extensions
-    nonisolated static let audioExtensions: Set<String> = ["mp3", "m4a", "wav", "aiff", "aif", "aac", "flac", "ogg", "alac"]
-    nonisolated static let videoExtensions: Set<String> = ["mp4", "mov", "m4v", "avi", "mkv", "wmv", "flv", "mpg", "mpeg", "3gp"]
+    // Build 86 — his words, 2026-09-19: "why does it not consider it media? it is media" · "add
+    // them all and all video codexes". A scan that skipped .m4p reported an Apple Music folder of
+    // 49 songs as empty, and it was deleted on that reading. Codecs (H.264, HEVC, ProRes, AAC…)
+    // live INSIDE a container; the scanner goes by the container's extension, so every common
+    // container is listed and every codec inside one is covered. Lower-case; compared lower-cased.
+    // ⛔ Deliberately LEFT OUT: ".ts" and ".tp" (also TypeScript and other source files — a
+    // whole-drive scan would move program code into Video/) and ".ifo" (a DVD index, not video).
+    nonisolated static let audioExtensions: Set<String> = [
+        "mp3", "m4a", "m4p", "m4b", "m4r", "aac", "alac", "wav", "wave", "aiff", "aif", "aifc", "caf",
+        "flac", "ogg", "oga", "opus", "wma", "ape", "wv", "mka", "mpc", "tta", "dsf", "dff",
+        "ac3", "eac3", "dts", "amr", "awb", "au", "snd", "ra", "mp2", "mpa", "spx", "weba"
+    ]
+    nonisolated static let videoExtensions: Set<String> = [
+        "mp4", "m4v", "mov", "qt", "avi", "mkv", "webm", "wmv", "asf", "flv", "f4v", "swf",
+        "mpg", "mpeg", "mpe", "m1v", "m2v", "mp2v", "mpv", "m2ts", "mts", "trp", "m2t",
+        "vob", "evo", "3gp", "3g2", "ogv", "ogm", "divx", "xvid", "rm", "rmvb", "dv", "dif",
+        "mxf", "mjpeg", "mjpg", "h264", "h265", "264", "265", "hevc", "yuv", "y4m", "nut", "bik", "ivf", "amv"
+    ]
     nonisolated static let photoExtensions: Set<String> = ["jpg", "jpeg", "heic", "heif", "png", "gif", "tif", "tiff", "bmp", "webp", "dng", "cr2", "cr3", "nef", "arw", "raf", "orf", "rw2"]
 
     var allMediaExtensions: [String] {

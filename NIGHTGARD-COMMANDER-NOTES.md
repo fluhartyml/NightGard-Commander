@@ -592,3 +592,16 @@ that differs also offers **Keep the Other One**; for a library photo it means "d
 **nothing inside a Photos library is ever deleted** (tested: every original still in the library, one
 IMG_0001.JPG kept). Identical pairs: Merge. All suites ALL PASSED. His next step: *"we will see during the
 shake down."*
+
+## Build 86 — every audio and video container counts as media (2026-09-19)
+Found live: his Media/Apple Music folder on Cold Storage held **49 .m4p** (Apple Music downloads, Christmas
+songs); Scan for Media reported it empty because `.m4p` was not in the audio list, and he deleted it on that
+reading (16:31, network drive → permanent; DRM downloads, re-downloadable). His: *"why does it not consider it
+media? it is media"* · *"add them all and all video codexes"*.
+- Audio now: mp3 m4a **m4p m4b m4r** aac alac wav wave aiff aif aifc caf flac ogg oga opus wma ape wv mka mpc
+  tta dsf dff ac3 eac3 dts amr awb au snd ra mp2 mpa spx weba.
+- Video now: mp4 m4v mov qt avi mkv webm wmv asf flv f4v swf mpg mpeg mpe m1v m2v mp2v mpv m2ts mts trp m2t vob
+  evo 3gp 3g2 ogv ogm divx xvid rm rmvb dv dif mxf mjpeg mjpg h264 h265 264 265 hevc yuv y4m nut bik ivf amv.
+- Codecs live inside containers; the scanner goes by container, so every codec inside these is covered.
+- ⛔ Left out on purpose: **.ts / .tp** (also TypeScript/source code — a whole-drive scan would move code into
+  Video/) and **.ifo** (DVD index). Tested: .m4p/.m4b/.opus/.webm/.mts/.mkv/.flac found; .ts/.IFO/.txt not.
