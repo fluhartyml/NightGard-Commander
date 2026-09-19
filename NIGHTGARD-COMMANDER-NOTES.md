@@ -485,3 +485,34 @@ build 76 and the govoner can and gives stability warnings as discussed last nigh
 - Tests: new build-76 suite ALL PASSED (grouping, siblings ×10 on Mac drive + Raid, governor 13 checks);
   engine suite Mac→Raid ALL PASSED (73); media suite ALL PASSED (35). The engine suite's Mac→Mac run fails
   the same 8 checks on build 75's engine — it needs a target on another drive; not a regression.
+
+## Build 77 — keep one, and both leave the source (2026-09-19)
+
+**His words, at the lp_image.mov / MailBox popups on build 76:** *"isnt tere a merge?"* · *"replace?"* ·
+*"i dont want to skip because the move is how i keep track, i dont want to go back and manually move one
+file a zilion times"* · *"i only want to kep one and move both"* · *"you need to either add merge or replave
+or have it merge the metadata but keeep one file"* · *"BTW, im NOT copying, im MOVING"* · *"when it shows two
+files, hy cant you choose the one to be saved?"*
+
+- A flatten or media sort **on a Move** now offers, for two same-named FILES:
+  - **Merge** (identical, compared byte for byte — the popup now says so; 76 called every pair "different"
+    without checking): one lands; the twin leaves the source once the kept one has arrived and matches
+    again. Finder tags from both are kept, with the earlier creation date.
+  - **Keep This One** (differ): this one lands; the other goes to the Trash (deleted if it is already on a
+    network drive). Works against another bar's file too, if that file has not started moving; if it
+    has, **both are kept and the summary says so** — never a silent loss.
+  - **Keep the Other One** (differ): the other lands; this one goes to the Trash.
+  - Each button names the card it keeps — folder and size.
+- **Whatever leaves the source leaves LAST, after the kept file has landed.** A Merge waiting on another
+  bar waits (Pause/Cancel work); if that bar ends without delivering, this file stays in the source, said.
+- "Do the same for all" keeps separate answers for identical and differing pairs.
+- A Copy still offers only Keep Both / Skip (7.2 unchanged). Photos still never leave their folder.
+- The popup says "Sorting…" for a media scan, not "Flattening…".
+- ⛔ **BUG FOUND IN 76 (live on his machine at the time):** a bar starting to write swept EVERY hidden
+  `.ngc-partial-` file in its shelves as stale — including a sibling bar's file mid-write. That copy then
+  failed its check ("0 bytes") and asked Retry; **the original stayed on the source** (a Move deletes only
+  after verifying). Fixed: bars register live partials in `TargetClaims`; the sweep skips them.
+- ⛔ **BUG FOUND WHILE TESTING 77:** identical twins in two bars were judged "different" when the other bar
+  moved its copy away mid-read. Now re-compared against the copy that just landed.
+- Tests: build-77 suite (9 scenarios) ALL PASSED ×4 on Mac drive + Raid; build-76 suite ALL PASSED ×3
+  (it caught the partial-sweep bug); engine Mac→Raid 73 ALL PASSED; media 35 ALL PASSED.

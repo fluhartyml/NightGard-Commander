@@ -84,6 +84,11 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
         /// Extract (7.6): one original out of a Photos library under its real name, dated
         /// when it was taken, converted when `format` is not `.original` (7.9).
         case extract(src: URL, dst: URL, move: Bool, format: ExtractFormat, date: Date?, size: Int64)
+        /// Build 77, Merge / Replace / Keep the Other One on a Move: once the file being kept
+        /// has landed at `landedAt`, this source leaves — removed if every byte matches
+        /// (`identical`), otherwise sent to the Trash. `owner` is the source another bar is
+        /// carrying there, when it is another bar's. Always run after every transfer.
+        case retire(src: URL, landedAt: URL, identical: Bool, owner: URL?)
     }
 
     private struct EngineError: LocalizedError {
@@ -203,6 +208,17 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
         } catch {
             summary.failed.append(.init(path: targetDir.path, reason: error.localizedDescription))
         }
+
+        // Build 77: said once each, not a line per file.
+        if mergedCount > 0 {
+            summary.notes.append(.init(path: targetDir.path,
+                reason: "\(countText(mergedCount, "identical duplicate")) merged: one copy of each is in the target, the \(mergedCount == 1 ? "other was" : "others were") removed from the source after every byte was compared."))
+        }
+        if retiredCount > 0 {
+            summary.notes.append(.init(path: targetDir.path,
+                reason: "\(countText(retiredCount, "file")) you chose not to keep \(retiredCount == 1 ? "was" : "were") \(retiredToTrash ? "sent to the Trash" : "deleted (a network drive has no Trash)")."))
+        }
+        sharedTargets?.finish(claimedSources)
 
         progress.phase = .finishing
         await report(force: true)
@@ -376,6 +392,9 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
         switch choice ?? .cancel {
         case .cancel:
             throw FileOpCancelled()
+        case .merge, .keepOther:
+            // Only a flatten or media sort offers these (build 77); never asked here.
+            skip(src, "Left in place.")
         case .skip:
             skip(src, same == .differs
                  ? "An item with this name is already there — you chose Skip."
@@ -479,8 +498,13 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
 
     // MARK: - Plan 7.1–7.5: Flatten
 
-    /// "Apply to all" for the flatten question — Skip or Keep Both only (7.2).
+    /// "Apply to all" for the flatten question — for files that differ, and (build 77) for
+    /// identical ones, kept apart so a Merge-for-all never lands on a pair that differs.
     private var flattenForAll: FileChoice?
+    private var flattenForAllIdentical: FileChoice?
+    /// Build 77: every source this bar claimed a name for in the shared registry — marked
+    /// finished when the bar ends, so a sibling's Merge stops waiting on it.
+    private var claimedSources = Set<String>()
     /// Scan for Media plans several libraries and loose files into the same folders in
     /// one job, so the names each one claims must be shared — otherwise two libraries
     /// both claim “IMG_0001.JPG” and the second fails at copy time. Caught by the build-68
@@ -502,9 +526,10 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
         for src in items {
             try checkCancelled()
             let s = facts(src)
+            let move = mayMove(src)
             guard let dst = try await resolveFlatTarget(src: src, facts: s, name: src.lastPathComponent,
-                                                        remaining: &remaining, claimed: &claimed) else { continue }
-            try addNew(src: src, dst: dst, facts: s, move: mayMove(src))
+                                                        remaining: &remaining, claimed: &claimed, srcMoves: move) else { continue }
+            try addNew(src: src, dst: dst, facts: s, move: move)
         }
     }
 
@@ -535,36 +560,126 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
         return clashes
     }
 
-    /// The target for one flattened item, or nil if he chose Skip. Only Skip or Keep Both
-    /// are offered (7.2) — a flatten never replaces what is already there.
+    /// The target for one flattened item, or nil when it will not travel under a name of its
+    /// own (Skip, Merge, Keep the Other One).
+    ///
+    /// 7.2 offered only Skip or Keep Both. ⭐ BUILD 77 — on a Move, his words 2026-09-19: "i
+    /// dont want to skip because the move is how i keep track" · "i only want to kep one and
+    /// move both" · "you need to either add merge or replave or have it merge the metadata
+    /// but keeep one file". So a Move also offers, for two FILES:
+    ///  • Merge (identical, byte for byte) — one lands, the twin leaves the source.
+    ///  • Replace (they differ) — this one lands; the other goes to the Trash, or, if it is
+    ///    already in the target on a network drive, is deleted. Not offered when another bar
+    ///    is carrying the other one — its step is not this bar's to change.
+    ///  • Keep the Other One (they differ) — the other lands; this one goes to the Trash.
+    /// Whatever leaves the source leaves only AFTER the kept file has landed.
+    /// `srcMoves` is whether this source may leave its folder at all (photos never do).
     private func resolveFlatTarget(src: URL, facts s: FileFacts, name: String, remaining: inout Int,
-                                   claimed: inout [String: URL], in folder: URL? = nil) async throws -> URL? {
+                                   claimed: inout [String: URL], in folder: URL? = nil,
+                                   srcMoves: Bool = false) async throws -> URL? {
         var dst = (folder ?? targetDir).appendingPathComponent(name)
         let inTarget = exists(dst)
         var incoming = claimed[dst.path]
+        var fromSibling = false
         // Build 76: a sibling bar from the same scan may already have planned this name.
         // Claiming is one locked step, so two bars can never both find it free.
-        if !inTarget, incoming == nil, let other = sharedTargets?.claim(dst.path, for: src) {
-            incoming = other
+        if !inTarget, incoming == nil {
+            if let other = sharedTargets?.claim(dst.path, for: src) {
+                incoming = other
+                fromSibling = true
+            } else if sharedTargets != nil {
+                claimedSources.insert(src.path)
+            }
         }
         if inTarget || incoming != nil {
             remaining = max(0, remaining - 1)
-            var choice = flattenForAll
+            // What the other one is — compared, not assumed. If another bar has already moved
+            // it, it is the file now in the target.
+            let other: URL? = inTarget ? dst : (incoming.flatMap { exists($0) ? $0 : nil } ?? (exists(dst) ? dst : nil))
+            let otherFacts = other.map(facts)
+            let bothFiles = !s.isDirectory && otherFacts.map { !$0.isDirectory } == true
+            var same: FileQuestion.Sameness = .differs
+            if bothFiles, let o = otherFacts {
+                same = try await compare(s, o)
+                // Another bar can move its file away while this one is reading it — the read
+                // then fails and says "differs". Caught by the build-77 test. Compare with the
+                // copy that has just landed instead.
+                if same == .differs, !inTarget, !exists(o.url), exists(dst), !facts(dst).isDirectory {
+                    same = try await compare(s, facts(dst))
+                }
+            }
+            let identical = same != .differs
+            let onMove = kind == .move && bothFiles
+            let mergeOK = onMove && identical
+            let replaceOK = onMove && !identical
+            let keepOtherOK = onMove && !identical && srcMoves
+
+            func offered(_ c: FileChoice) -> Bool {
+                switch c {
+                case .keepBoth, .skip, .cancel: return true
+                case .merge: return mergeOK
+                case .replace: return replaceOK
+                case .keepOther: return keepOtherOK
+                default: return false
+                }
+            }
+            var choice = identical ? flattenForAllIdentical : flattenForAll
+            if let c = choice, !offered(c) { choice = nil }
             if choice == nil {
-                var question = FileQuestion(kind: kind, source: s, target: incoming.map(facts) ?? facts(dst),
-                                            sameness: .differs, unitOnly: false, remainingLikeThis: remaining,
+                var question = FileQuestion(kind: kind, source: s, target: otherFacts ?? facts(dst),
+                                            sameness: same, unitOnly: false, remainingLikeThis: remaining,
                                             targetGoesToTrash: isLocalVolume(dst))
                 question.flattenOnly = true
                 question.targetIsIncoming = !inTarget
+                question.mergeOffered = mergeOK
+                question.replaceOffered = replaceOK
+                question.keepOtherOffered = keepOtherOK
+                question.mediaSort = { if case .media = mode { return true }; return false }()
+                question.otherGoesToTrash = inTarget ? isLocalVolume(dst) : (incoming.map(isLocalVolume) ?? true)
                 let answer = await delegate.askFile(question)
                 choice = answer.choice
-                if answer.applyToAll { flattenForAll = answer.choice }
+                if answer.applyToAll {
+                    if identical { flattenForAllIdentical = answer.choice } else { flattenForAll = answer.choice }
+                }
             }
+            let owner = fromSibling ? incoming : nil
             switch choice ?? .cancel {
             case .cancel:
                 throw FileOpCancelled()
             case .keepBoth:
                 dst = uniqueName(for: dst, claimant: src)
+            case .merge:
+                if srcMoves {
+                    ops.append(.retire(src: src, landedAt: dst, identical: true, owner: owner))
+                } else {
+                    skip(src, "Identical to the “\(name)” arriving there. This one stays in the source — photos are always copied, never moved.")
+                }
+                return nil
+            case .keepOther:
+                ops.append(.retire(src: src, landedAt: dst, identical: false, owner: owner))
+                return nil
+            case .replace:
+                if inTarget {
+                    ops.append(.dispose(dst))
+                } else if fromSibling {
+                    // Another bar holds the name. If its file has not started moving, this one
+                    // takes the name and that bar sends its copy to the Trash when it gets
+                    // there. Too late = both are kept, and said — never a silent loss.
+                    if sharedTargets?.overrule(dst.path, winner: src) == true {
+                        claimedSources.insert(src.path)
+                    } else {
+                        dst = uniqueName(for: dst, claimant: src)
+                        summary.notes.append(.init(path: src.path,
+                            reason: "The other “\(name)” had already started moving when you chose to keep this one, so both were kept — this one as “\(dst.lastPathComponent)”."))
+                    }
+                } else if let other = incoming {
+                    _ = sharedTargets?.overrule(dst.path, winner: src)
+                    if dropPlannedStep(of: other, to: dst) {
+                        // The other one was going to move here; now it leaves the source for
+                        // the Trash instead — once this one has landed.
+                        ops.append(.retire(src: other, landedAt: dst, identical: false, owner: nil))
+                    }
+                }
             default:
                 skip(src, inTarget ? "A file named “\(name)” is already in the target — you chose Skip."
                                    : "Another file named “\(name)” is coming from a different folder — you chose Skip.")
@@ -574,6 +689,29 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
         claimed[dst.path] = src
         plannedTargets.insert(dst.path)
         return dst
+    }
+
+    /// Build 77 Replace: takes the planned step carrying `other` to `dst` out of the plan.
+    /// True when that step would have MOVED it — so it must still leave the source.
+    private func dropPlannedStep(of other: URL, to dst: URL) -> Bool {
+        func matches(_ a: URL, _ b: URL) -> Bool { a.standardizedFileURL.path == b.standardizedFileURL.path }
+        guard let i = ops.lastIndex(where: { op in
+            switch op {
+            case let .transfer(s, d, _, _, _): return matches(s, other) && matches(d, dst)
+            case let .extract(s, d, _, _, _, _): return matches(s, other) && matches(d, dst)
+            case let .renameMove(s, d): return matches(s, other) && matches(d, dst)
+            default: return false
+            }
+        }) else { return false }
+        let moved: Bool
+        switch ops[i] {
+        case let .transfer(_, _, m, _, _): moved = m
+        case let .extract(_, _, m, _, _, _): moved = m
+        case .renameMove: moved = true
+        default: moved = false
+        }
+        ops.remove(at: i)
+        return moved
     }
 
     /// 7.5 — after a Flatten Move the source folders are empty shells. Leave them unless he
@@ -825,9 +963,10 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
             progress.itemsChecked += 1
             progress.currentName = src.lastPathComponent
             await report()
-            guard let dst = try await resolveFlatTarget(src: src, facts: s, name: src.lastPathComponent,
-                                                        remaining: &remaining, claimed: &claimed, in: folder) else { continue }
             let move = !plan.copyOnly.contains(src.path) && mayMove(src)
+            guard let dst = try await resolveFlatTarget(src: src, facts: s, name: src.lastPathComponent,
+                                                        remaining: &remaining, claimed: &claimed, in: folder,
+                                                        srcMoves: move) else { continue }
             try addNew(src: src, dst: dst, facts: s, move: move)
         }
         if alreadyHome > 0 {
@@ -864,6 +1003,9 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
             .appendingPathComponent(".\(dst.lastPathComponent).ngc-partial-\(UUID().uuidString.prefix(8))")
         var partialExists = false
         defer { if partialExists { try? fm.removeItem(at: partial) } }
+        // Build 77: a sibling bar's stale-partial sweep must not take this one mid-write.
+        sharedTargets?.markLive(partial.path)
+        defer { sharedTargets?.markDone(partial.path) }
 
         if format == .original {
             partialExists = true
@@ -939,6 +1081,10 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
     // MARK: - Phase 2: do it
 
     private func execute() async throws {
+        // Build 77: a file only leaves the source after the one kept in its place has landed,
+        // so every retire step goes last.
+        let isRetire: (Op) -> Bool = { if case .retire = $0 { return true }; return false }
+        ops = ops.filter { !isRetire($0) } + ops.filter(isRetire)
         var files = 0
         var bytes: Int64 = 0
         for op in ops {
@@ -1063,6 +1209,10 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
         for folder in folders {
             let names = (try? fm.contentsOfDirectory(atPath: folder)) ?? []
             for name in names where name.hasPrefix(".") && name.contains(".ngc-partial-") {
+                // ⛔ Build 77: a sibling bar from the same scan may be writing this one RIGHT
+                // NOW. Build 76 swept those too — the other bar's copy then failed its check
+                // ("0 bytes") and asked Retry; the original stayed put. Caught by the test.
+                if sharedTargets?.isLive(folder + "/" + name) == true { continue }
                 if (try? fm.removeItem(atPath: folder + "/" + name)) != nil { cleared += 1 }
             }
         }
@@ -1121,6 +1271,20 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
     }
 
     private func perform(_ op: Op) async throws {
+        // Build 77: he chose, in another bar, to keep a different file under this name. This
+        // one does not travel; on a Move it leaves the source for the Trash.
+        if let claims = sharedTargets, let (src, dst, moves) = carried(op), !claims.begin(dst.path, by: src) {
+            if moves {
+                if !isLocalVolume(src) { retiredToTrash = false }
+                try dispose(src)
+                retiredCount += 1
+            } else {
+                skip(src, "Not \(kind == .move ? "moved" : "copied") — you kept the other “\(dst.lastPathComponent)”.")
+            }
+            progress.filesDone += 1
+            await report()
+            return
+        }
         switch op {
         case let .dispose(url):
             try dispose(url)
@@ -1158,9 +1322,13 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
             guard try await bytesEqual(src, keptAt) else {
                 throw EngineError(message: "“\(src.lastPathComponent)” is not byte-for-byte identical to the file already in the target, so it was NOT removed from the source.")
             }
+            mergeMetadata(from: src, into: keptAt)
             try fm.removeItem(at: src)
             log.entries.append(.removedDuplicate(path: src.path, keptAt: keptAt.path))
             summary.notes.append(.init(path: src.path, reason: "Removed from the source — the identical file is already in the target, as you chose."))
+
+        case let .retire(src, landedAt, identical, owner):
+            try await retire(src: src, landedAt: landedAt, identical: identical, owner: owner)
 
         case let .discardSourceDSStore(src):
             try? fm.removeItem(at: src)
@@ -1199,6 +1367,9 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
             .appendingPathComponent(".\(dst.lastPathComponent).ngc-partial-\(UUID().uuidString.prefix(8))")
         var partialExists = false
         defer { if partialExists { try? fm.removeItem(at: partial) } }
+        // Build 77: a sibling bar's stale-partial sweep must not take this one mid-write.
+        sharedTargets?.markLive(partial.path)
+        defer { sharedTargets?.markDone(partial.path) }
 
         if s.isSymlink {
             let destination = try fm.destinationOfSymbolicLink(atPath: src.path)
@@ -1252,6 +1423,62 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
 
     /// Trash on a drive that has one; delete on a network drive, which does not. Every
     /// popup that leads here said which it would be (his 5.3: "not our lane").
+    // MARK: - Build 77: keep one, and both leave the source
+
+    private var mergedCount = 0
+    private var retiredCount = 0
+    private var retiredToTrash = true
+
+    /// The kept file must be in place before this one leaves — another bar may still be
+    /// carrying it, so wait for it (Pause and Cancel still work) unless that bar has ended.
+    private func retire(src: URL, landedAt: URL, identical: Bool, owner: URL?) async throws {
+        progress.currentName = src.lastPathComponent
+        while !exists(landedAt) {
+            guard let owner, let claims = sharedTargets, !claims.hasFinished(owner) else {
+                skip(src, "Left in the source: the “\(landedAt.lastPathComponent)” it was \(identical ? "being merged with" : "giving way to") never arrived.")
+                return
+            }
+            progress.currentName = "Waiting for “\(landedAt.lastPathComponent)” from another bar…"
+            await report()
+            try await gate()
+            try? await Task.sleep(for: .seconds(2))
+        }
+        if identical {
+            // Compared again here, after it landed: this deletes, so nothing is assumed.
+            guard try await bytesEqual(src, landedAt) else {
+                throw EngineError(message: "“\(src.lastPathComponent)” is not byte-for-byte identical to the one that arrived, so it was NOT removed from the source.")
+            }
+            mergeMetadata(from: src, into: landedAt)
+            try fm.removeItem(at: src)
+            log.entries.append(.removedDuplicate(path: src.path, keptAt: landedAt.path))
+            mergedCount += 1
+        } else {
+            if !isLocalVolume(src) { retiredToTrash = false }
+            try dispose(src)
+            retiredCount += 1
+        }
+        await report()
+    }
+
+    /// His "merge the metadata but keeep one file": Finder tags from both, and the earlier
+    /// creation date. The contents are already identical.
+    private func mergeMetadata(from src: URL, into kept: URL) {
+        let keys: Set<URLResourceKey> = [.tagNamesKey, .creationDateKey]
+        guard let a = try? src.resourceValues(forKeys: keys),
+              let b = try? kept.resourceValues(forKeys: keys) else { return }
+        let before = b.tagNames ?? []
+        let tags = Array(Set(before).union(a.tagNames ?? [])).sorted()
+        if tags.count != before.count {
+            try? (kept as NSURL).setResourceValue(tags, forKey: .tagNamesKey)
+        }
+        if let ca = a.creationDate, let cb = b.creationDate, ca < cb {
+            var values = URLResourceValues()
+            values.creationDate = ca
+            var k = kept
+            try? k.setResourceValues(values)
+        }
+    }
+
     private func dispose(_ url: URL) throws {
         if isLocalVolume(url) {
             var result: NSURL?
@@ -1664,10 +1891,22 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
         return failedFolders.contains { dst.path.hasPrefix($0 + "/") || dst.path == $0 } ? dst : nil
     }
 
+    /// What a travelling step carries: source, destination, and whether the source leaves.
+    /// Library originals (Extract) never leave through here.
+    private func carried(_ op: Op) -> (URL, URL, Bool)? {
+        switch op {
+        case let .transfer(s, d, m, _, _): return (s, d, m)
+        case let .renameMove(s, d): return (s, d, true)
+        case let .extract(s, d, _, _, _, _): return (s, d, false)
+        default: return nil
+        }
+    }
+
     private func pathOf(_ op: Op) -> String {
         switch op {
         case let .renameMove(s, _), let .makeFolder(s, _), let .finishFolder(s, _),
-             let .transfer(s, _, _, _, _), let .removeDuplicate(s, _), let .extract(s, _, _, _, _, _):
+             let .transfer(s, _, _, _, _), let .removeDuplicate(s, _), let .extract(s, _, _, _, _, _),
+             let .retire(s, _, _, _):
             return s.path
         case let .dispose(u), let .discardSourceDSStore(u), let .removeSourceFolderIfEmpty(u):
             return u.path
@@ -1685,6 +1924,7 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
             let candidate = folder.appendingPathComponent(name)
             if !exists(candidate) && !plannedTargets.contains(candidate.path)
                 && (claimant.flatMap { sharedTargets?.claim(candidate.path, for: $0) } == nil) {
+                if let c = claimant, sharedTargets != nil { claimedSources.insert(c.path) }
                 plannedTargets.insert(candidate.path)
                 return candidate
             }

@@ -295,18 +295,61 @@ private struct FileQuestionView: View {
                  ? "Two files named “\(question.source.name)” are coming into the same folder"
                  : "“\(question.source.name)” is already in “\(Fmt.folderName(question.target.url))”")
                 .font(.title2).bold()
-            Text("Flattening puts every file in one folder, so files from different folders can share a name. Nothing already there is ever replaced.")
+            Text(flattenIntro)
                 .foregroundStyle(.secondary)
         } else {
             standardHeader
         }
     }
 
-    /// 7.2 — Flatten offers only these two. His words: "skip or keep both and apply to all".
+    /// What the flatten / media-sort popup says under its title. The build-77 choices are
+    /// named in it only when offered.
+    private var flattenIntro: String {
+        var text = question.mediaSort
+            ? "Sorting brings files from many folders into the same folders, so two can share a name."
+            : "Flattening puts every file in one folder, so files from different folders can share a name."
+        switch question.sameness {
+        case .sameContents: text += " These two are identical — every byte was compared."
+        case .verifiedEarlier: text += " These two are identical — Commander compared this exact pair on an earlier run."
+        case .sameSizeAndDate: text += " These two have the same size and date; their contents were not compared."
+        case .differs: text += question.source.isDirectory || question.target.isDirectory ? "" : " These two are different files."
+        }
+        return text
+    }
+
+    /// Where the file that is NOT kept goes, said plainly.
+    private var otherGoes: String {
+        question.otherGoesToTrash ? "goes to the Trash" : "is deleted — that drive has no Trash"
+    }
+
+    /// 7.2 — Flatten offered only Keep Both and Skip. His words: "skip or keep both and
+    /// apply to all". Build 77 adds Merge, Replace and Keep the Other One on a Move — his:
+    /// "i only want to kep one and move both".
     @ViewBuilder private var flattenChoices: some View {
+        if question.mergeOffered {
+            ChoiceRow(title: "Merge",
+                      explanation: "Keep one. It lands here; the identical copy leaves the source once that one has arrived and every byte matches again. Finder tags from both are kept, with the earlier creation date.",
+                      isDefault: true) { controller.answerFile(.merge, applyToAll: applyToAll) }
+        }
+        // His question, 2026-09-19: "when it shows two files, hy cant you choose the one to be
+        // saved?" — so each button names the card it keeps: its folder and its size.
+        if question.replaceOffered {
+            ChoiceRow(title: question.targetIsIncoming ? "Keep This One" : "Replace",
+                      explanation: question.targetIsIncoming
+                        ? "Keep the one from “\(Fmt.folderName(question.source.url))” (\(Fmt.size(question.source.size))). The one from “\(Fmt.folderName(question.target.url))” \(otherGoes) once this one has landed."
+                        : "Put the one from “\(Fmt.folderName(question.source.url))” (\(Fmt.size(question.source.size))) here. The one already here (\(Fmt.size(question.target.size))) \(otherGoes).",
+                      role: .destructive) { controller.answerFile(.replace, applyToAll: applyToAll) }
+        }
+        if question.keepOtherOffered {
+            ChoiceRow(title: question.targetIsIncoming ? "Keep the Other One" : "Keep the One Already Here",
+                      explanation: question.targetIsIncoming
+                        ? "Keep the one from “\(Fmt.folderName(question.target.url))” (\(Fmt.size(question.target.size))). The one from “\(Fmt.folderName(question.source.url))” goes to the Trash once the other has landed."
+                        : "Keep the one already here (\(Fmt.size(question.target.size))). The one from “\(Fmt.folderName(question.source.url))” goes to the Trash.",
+                      role: .destructive) { controller.answerFile(.keepOther, applyToAll: applyToAll) }
+        }
         ChoiceRow(title: "Keep Both",
                   explanation: "Bring this one in too, renamed with a number, like “\(keepBothName)”.",
-                  isDefault: true) { controller.answerFile(.keepBoth, applyToAll: applyToAll) }
+                  isDefault: !question.mergeOffered) { controller.answerFile(.keepBoth, applyToAll: applyToAll) }
         ChoiceRow(title: "Skip",
                   explanation: question.kind == .move
                     ? "Leave this one where it is, in the source."
@@ -399,7 +442,10 @@ private struct FileQuestionView: View {
     private var applyToAllLabel: String {
         let n = question.remainingLikeThis
         if question.flattenOnly {
-            return "Do the same for the \(Fmt.plural(n, "other file", "other files")) with a name that clashes"
+            // Build 77: identical and differing pairs keep separate answers, so say which.
+            let kind = question.mergeOffered || question.replaceOffered || question.keepOtherOffered
+                ? (question.isIdentical ? " — identical pairs only" : " — pairs that differ only") : ""
+            return "Do the same for the \(Fmt.plural(n, "other file", "other files")) with a name that clashes\(kind)"
         }
         let what = question.unitOnly ? "other item like this"
             : (question.isIdentical ? "other identical file" : "other file that clashes")

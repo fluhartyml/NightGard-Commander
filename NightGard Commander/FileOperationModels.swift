@@ -175,6 +175,35 @@ nonisolated final class TargetClaims: @unchecked Sendable {
     private let lock = NSLock()
     private var owners: [String: URL] = [:]
 
+    private var finished = Set<String>()
+    /// Hidden partial files a bar is writing right now — never swept as stale.
+    private var live = Set<String>()
+
+    func markLive(_ path: String) { lock.lock(); live.insert(path); lock.unlock() }
+    func markDone(_ path: String) { lock.lock(); live.remove(path); lock.unlock() }
+    func isLive(_ path: String) -> Bool { lock.lock(); defer { lock.unlock() }; return live.contains(path) }
+    /// Names whose file has started travelling — past that point no bar can change who
+    /// owns them.
+    private var started = Set<String>()
+
+    /// Build 77 "Keep This One" against another bar's file: this source takes the name, but
+    /// only if the other has not started moving yet. False = too late, keep both.
+    func overrule(_ path: String, winner: URL) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        if started.contains(path) { return false }
+        owners[path] = winner
+        return true
+    }
+
+    /// A bar is about to carry `source` to `path`. False when he chose to keep a different
+    /// file under that name — then this one does not travel.
+    func begin(_ path: String, by source: URL) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        if let owner = owners[path], owner != source { return false }
+        started.insert(path)
+        return true
+    }
+
     /// Claims `path` for `source`. Nil when it is now this source's; otherwise the source
     /// another bar already planned there.
     func claim(_ path: String, for source: URL) -> URL? {
@@ -182,6 +211,17 @@ nonisolated final class TargetClaims: @unchecked Sendable {
         if let owner = owners[path], owner != source { return owner }
         owners[path] = source
         return nil
+    }
+
+    /// A bar has ended (done, cancelled or failed). A Merge waiting for a file one of these
+    /// sources was carrying stops waiting: if the file is not there by now, it never will be.
+    func finish(_ sources: Set<String>) {
+        lock.lock(); finished.formUnion(sources); lock.unlock()
+    }
+
+    func hasFinished(_ source: URL) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        return finished.contains(source.path)
     }
 }
 
@@ -291,6 +331,15 @@ nonisolated struct FileQuestion: Sendable {
     /// Two INCOMING files with the same name (a flatten brings IMG_0001.jpg in from many
     /// folders) — the "already here" side is another source file, not something in the target.
     var targetIsIncoming = false
+    /// Build 77 — on a Move, a flatten or media sort also offers these. His ask: "you need
+    /// to either add merge or replave or have it merge the metadata but keeep one file".
+    var mergeOffered = false
+    var replaceOffered = false
+    var keepOtherOffered = false
+    /// Scan for Media sorts into shelves; it does not flatten. The popup says which.
+    var mediaSort = false
+    /// The other file is still in a source folder (not yet in the target).
+    var otherGoesToTrash = true
 
     var isIdentical: Bool { sameness != .differs }
 }
@@ -300,6 +349,14 @@ nonisolated enum FileChoice: Sendable {
     /// Identical files on a Move only: the copy already in the target stays, the source
     /// duplicate is removed. Asked, never assumed (his 3.6).
     case removeFromSource
+    /// Build 77, a Flatten or media sort on a Move — his words, 2026-09-19: "i only want to
+    /// kep one and move both" · "have it merge the metadata but keeep one file". Identical
+    /// files only: the twin lands, this copy leaves the source once the twin has arrived
+    /// and every byte matches. Finder tags are combined; the earliest creation date is kept.
+    case merge
+    /// Build 77: the files differ and he keeps the OTHER one. It lands; this one goes to the
+    /// Trash (a network drive has none — then it is deleted) once the other has arrived.
+    case keepOther
     case cancel
 }
 
