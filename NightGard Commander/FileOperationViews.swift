@@ -581,7 +581,9 @@ private struct SummaryView: View {
                 VStack(alignment: .leading, spacing: 12) {
                     section("Failed", summary.failed, "xmark.octagon.fill", .red)
                     section("Skipped", summary.skipped, "arrow.uturn.right.circle", .orange)
-                    section("Good to know", summary.notes, "info.circle", .blue)
+                    // No heading over the notes — his ask, 2026-09-19: the blue "Good to know"
+                    // looked like a link that did nothing. The notes themselves stay.
+                    section("", summary.notes, "info.circle", .blue)
                 }
             }
             .frame(maxHeight: 320)
@@ -644,7 +646,9 @@ private struct SummaryView: View {
     private func section(_ name: String, _ items: [FileOpSummary.Item], _ icon: String, _ color: Color) -> some View {
         if !items.isEmpty {
             VStack(alignment: .leading, spacing: 6) {
-                Label("\(name) (\(items.count))", systemImage: icon).font(.headline).foregroundStyle(color)
+                if !name.isEmpty {
+                    Label("\(name) (\(items.count))", systemImage: icon).font(.headline).foregroundStyle(color)
+                }
                 ForEach(items) { item in
                     HStack(alignment: .firstTextBaseline) {
                         VStack(alignment: .leading, spacing: 2) {
