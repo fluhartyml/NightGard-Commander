@@ -535,3 +535,14 @@ His ask: *"you know what would be better than show in finder (keep show in finde
 Each card shows a picture: a frame a few seconds into a video (reusing `PanePreview.frameFewSecondsIn`),
 otherwise Quick Look's preview. Nothing shown when there is no picture or the file has already moved.
 Show in Finder stays. Display only.
+
+## Build 81 — Merge is always on the popup (2026-09-19)
+His words: *"i want to see merge, full stop."* Merge is shown for every pair of files. Usable when they are
+identical (one lands; on a Move both sources are deleted after the byte check; a photo's source stays, a
+Copy deletes nothing — the line says which). **Greyed out when they differ**, with the reason ("N bytes
+apart in size" / "same size, contents differ"), because merging two different files would throw one away.
+Behind the grey button the engine refuses too: a forced Merge on a differing pair re-compares before
+deleting and keeps the source (test 10). Tests: build-77 suite (10 scenarios) ALL PASSED on Mac drive + Raid;
+engine 73 and media 35 ALL PASSED.
+⬜ Offered, not answered: an MP3 Merge that compares only the audio and ignores tags (his Bob Sinclar pair:
+same size ±1 KB, 2005 vs 2015 dates) · removing the do-same box next to Keep This One / Keep the Other One.

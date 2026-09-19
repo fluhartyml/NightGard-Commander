@@ -70,6 +70,7 @@ private struct ChoiceRow: View {
     let explanation: String
     var role: ButtonRole? = nil
     var isDefault = false
+    var enabled = true
     let action: () -> Void
 
     var body: some View {
@@ -78,6 +79,7 @@ private struct ChoiceRow: View {
                 Text(title).frame(minWidth: 150)
             }
             .controlSize(.large)
+            .disabled(!enabled)
             .keyboardShortcut(isDefault ? .defaultAction : nil)
             Text(explanation)
                 .foregroundStyle(.secondary)
@@ -324,7 +326,7 @@ private struct FileQuestionView: View {
             } else {
                 differingChoices
             }
-            if question.mergeOffered {
+            if question.mergeEnabled {
                 // Identical pairs can be many thousands (a duplicated folder); the count before
                 // comparing cannot tell how many, so the box is always offered here.
                 Toggle("Do the same for every identical pair in this bar", isOn: $applyToAll)
@@ -364,6 +366,26 @@ private struct FileQuestionView: View {
         return text
     }
 
+    /// What Merge will do — or, greyed out, why it cannot.
+    private var mergeText: String {
+        let here = Fmt.folderName(question.source.url), there = Fmt.folderName(question.target.url)
+        guard question.mergeEnabled else {
+            let a = question.source.size, b = question.target.size
+            let how = a == b ? "the same size, but their contents differ"
+                             : "\(Fmt.plural(Int(abs(a - b)), "byte")) apart in size"
+            return "Not available: these two are different files (\(how)). Merge only joins identical files, so nothing is ever thrown away. Show in Finder lets you look at both."
+        }
+        if question.kind != .move {
+            return "One copy lands in the target. Nothing is deleted — this is a copy."
+        }
+        if question.sourceStays {
+            return "One copy lands in the target. Nothing is deleted: photos are always copied, never moved, so both stay where they are."
+        }
+        return question.targetIsIncoming
+            ? "One copy lands in the target. BOTH sources are deleted — from “\(here)” and from “\(there)” — only after the copy in the target is checked byte for byte. Finder tags from both are kept."
+            : "The copy already in the target stays. This source in “\(here)” is deleted, after it is checked byte for byte against that copy. Finder tags from both are kept."
+    }
+
     /// Where the file that is NOT kept goes, said plainly.
     private var otherGoes: String {
         question.otherGoesToTrash ? "goes to the Trash" : "is deleted — that drive has no Trash"
@@ -375,12 +397,12 @@ private struct FileQuestionView: View {
     @ViewBuilder private var flattenChoices: some View {
         if question.mergeOffered {
             // His words, 2026-09-19, after the first wording read as if one copy stayed behind:
-            // "i only ant one to hit the target and BOTH deleted".
-            ChoiceRow(title: "Merge",
-                      explanation: question.targetIsIncoming
-                        ? "One copy lands in the target. BOTH sources are deleted — from “\(Fmt.folderName(question.source.url))” and from “\(Fmt.folderName(question.target.url))” — only after the copy in the target is checked byte for byte. Finder tags from both are kept."
-                        : "The copy already in the target stays. This source in “\(Fmt.folderName(question.source.url))” is deleted, after it is checked byte for byte against that copy. Finder tags from both are kept.",
-                      isDefault: true) { controller.answerFile(.merge, applyToAll: applyToAll) }
+            // "i only ant one to hit the target and BOTH deleted". Build 81: "i want to see merge,
+            // full stop" — always shown, greyed out with the reason when the files differ.
+            ChoiceRow(title: "Merge", explanation: mergeText,
+                      isDefault: question.mergeEnabled, enabled: question.mergeEnabled) {
+                controller.answerFile(.merge, applyToAll: applyToAll)
+            }
         }
         // His question, 2026-09-19: "when it shows two files, hy cant you choose the one to be
         // saved?" — so each button names the card it keeps: its folder and its size.
@@ -400,7 +422,7 @@ private struct FileQuestionView: View {
         }
         ChoiceRow(title: "Keep Both",
                   explanation: "Bring this one in too, renamed with a number, like “\(keepBothName)”.",
-                  isDefault: !question.mergeOffered) { controller.answerFile(.keepBoth, applyToAll: applyToAll) }
+                  isDefault: !question.mergeEnabled) { controller.answerFile(.keepBoth, applyToAll: applyToAll) }
         ChoiceRow(title: "Skip",
                   explanation: question.kind == .move
                     ? "Leave this one where it is, in the source."
@@ -494,7 +516,7 @@ private struct FileQuestionView: View {
         let n = question.remainingLikeThis
         if question.flattenOnly {
             // Build 77: identical and differing pairs keep separate answers, so say which.
-            let kind = question.mergeOffered || question.replaceOffered || question.keepOtherOffered
+            let kind = question.mergeEnabled || question.replaceOffered || question.keepOtherOffered
                 ? (question.isIdentical ? " — identical pairs only" : " — pairs that differ only") : ""
             return "Do the same for the \(Fmt.plural(n, "other file", "other files")) with a name that clashes\(kind)"
         }

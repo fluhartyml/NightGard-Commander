@@ -610,9 +610,10 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
             }
             let identical = same != .differs
             let onMove = kind == .move && bothFiles
-            // Only when this source can leave: Merge promises BOTH sources are deleted, and a
-            // photo never leaves its folder.
-            let mergeOK = onMove && identical && srcMoves
+            // Build 81: Merge is SHOWN for every pair of files — "i want to see merge, full stop" —
+            // and USABLE only when they are identical. Merging two different files would throw
+            // one away. A photo's source never leaves (it is always copied), which the popup says.
+            let mergeOK = bothFiles && identical
             let replaceOK = onMove && !identical
             let keepOtherOK = onMove && !identical && srcMoves
 
@@ -633,7 +634,9 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
                                             targetGoesToTrash: isLocalVolume(dst))
                 question.flattenOnly = true
                 question.targetIsIncoming = !inTarget
-                question.mergeOffered = mergeOK
+                question.mergeOffered = bothFiles
+                question.mergeEnabled = mergeOK
+                question.sourceStays = !srcMoves
                 question.replaceOffered = replaceOK
                 question.keepOtherOffered = keepOtherOK
                 question.mediaSort = { if case .media = mode { return true }; return false }()
@@ -654,7 +657,9 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
                 if srcMoves {
                     ops.append(.retire(src: src, landedAt: dst, identical: true, owner: owner))
                 } else {
-                    skip(src, "Identical to the “\(name)” arriving there. This one stays in the source — photos are always copied, never moved.")
+                    skip(src, kind == .move
+                         ? "Merged: identical to the “\(name)” arriving there. This one stays in the source — photos are always copied, never moved."
+                         : "Merged: identical to the “\(name)” arriving there, so it was not copied twice.")
                 }
                 return nil
             case .keepOther:

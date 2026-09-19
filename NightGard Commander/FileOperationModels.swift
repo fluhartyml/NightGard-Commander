@@ -333,7 +333,12 @@ nonisolated struct FileQuestion: Sendable {
     var targetIsIncoming = false
     /// Build 77 — on a Move, a flatten or media sort also offers these. His ask: "you need
     /// to either add merge or replave or have it merge the metadata but keeep one file".
+    /// Build 81 — his words: "i want to see merge, full stop." Shown for every pair of files;
+    /// usable only when they are identical (`mergeEnabled`), greyed out with the reason otherwise.
     var mergeOffered = false
+    var mergeEnabled = false
+    /// This source never leaves its folder (a photo) — Merge then deletes nothing.
+    var sourceStays = false
     var replaceOffered = false
     var keepOtherOffered = false
     /// Scan for Media sorts into shelves; it does not flatten. The popup says which.
