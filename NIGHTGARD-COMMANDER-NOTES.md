@@ -557,3 +557,20 @@ still has a single Cancel. Tested through the real controller: 3 bars, one Cance
 question, sources intact.
 ⬜ Still waiting on him (asked 13:2x): videos keep their source folder or sort by type · remove the 5,440
 empty folders under Media/Photos on Cold Storage · then build "one media type per scan, photos flat".
+
+## Build 83 — one media type per scan; photos flat (2026-09-19)
+His words: *"i think we're going to have to split up the Media searches to audio vidio and photo because the
+photos are creating sub folders with uuid names and they need to be flat but the videis and other media
+folders need sub folders"* · *"i think it would be best to do one media type at a time"* · on videos: *"i like
+videos or videos/mp4 .../mov .../vid(etc)"*.
+- **Media type** choice in the scan dialog: Audio · Video · Photos (with counts). Only that type is sorted,
+  only its folders are made — no more 5,440 photo folders built ahead of an audio run.
+- ⭐ **PHOTOS GO FLAT into Photos/ — library photos too. This REPLACES build 69's "keep the containing
+  folder" rule**, which produced one folder per UUID-named source folder. Photos are still copied, never
+  moved. Same-named photos meet in Photos/ and get Merge / Keep Both.
+- Audio and video keep the Organization choice (worded per type: "One Video/ folder", "Video/ then
+  Extension (Video/MP4/, MOV/…)").
+- Live Photo videos (.mov) extracted from a library land in Photos/ beside their stills.
+- Tests: media suite updated to the flat rule + a Photos-only run making only Photos/ — ALL PASSED on Mac
+  drive + Raid; build-76 and build-77 suites ALL PASSED.
+⬜ Still his to answer: the 5,440 empty folders left under Media/Photos on Cold Storage by earlier runs.

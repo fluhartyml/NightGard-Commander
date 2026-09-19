@@ -111,16 +111,20 @@ nonisolated struct MediaPlan: Sendable, Equatable {
             let type = MediaScanner.mediaType(for: url)
             if type == .photo {
                 plan.copyOnly.insert(path)
-                let parent = url.deletingLastPathComponent().standardizedFileURL
-                plan.folders[path] = parent.path == "/" ? photoShelf : join(photoShelf, parent.lastPathComponent)
+                // ⭐ BUILD 83 — PHOTOS GO FLAT. His words, 2026-09-19: "the photos are creating
+                // sub folders with uuid names and they need to be flat but the videis and other
+                // media folders need sub folders". This replaces build 69's "keep the folder"
+                // rule: that rule made one folder per UUID-named source folder (5,440 of them).
+                plan.folders[path] = photoShelf
             } else {
                 plan.folders[path] = shelf(type, url.pathExtension.uppercased())
             }
         }
+        // Build 83: a library's photos go flat into the same Photos folder — no folder per
+        // library either. Same-named photos from two libraries meet there and are asked
+        // Merge / Keep Both like any other pair.
         for lib in libraries {
-            let name = lib.pathExtension.lowercased() == "photoslibrary"
-                ? lib.deletingPathExtension().lastPathComponent : lib.lastPathComponent
-            plan.libraries[lib.standardizedFileURL.path] = join(photoShelf, name)
+            plan.libraries[lib.standardizedFileURL.path] = photoShelf
         }
         return plan
     }

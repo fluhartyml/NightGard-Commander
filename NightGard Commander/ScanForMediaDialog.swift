@@ -47,6 +47,14 @@ struct ScanForMediaDialog: View {
     @State private var phase: ScanPhase = .scanning
     @State private var selectedAction: ScanAction = .addToPlaylist
     @State private var selectedOrganization: Organization = .flatten
+    /// Build 83 — ONE MEDIA TYPE PER SCAN. His words, 2026-09-19: "i think we're going to have
+    /// to split up the Media searches to audio vidio and photo" · "i think it would be best to
+    /// do one media type at a time". Only this type is sorted, and only its folders are made.
+    @State private var selectedType: MediaScanner.MediaType = .audio
+
+    private var typeFiles: [URL] { scanner.foundFiles.filter { scanner.getMediaType(for: $0) == selectedType } }
+    /// Libraries hold photos, so they belong to a Photos scan only.
+    private var typeLibraries: [URL] { selectedType == .photo ? scanner.foundLibraries : [] }
     @State private var processedCount = 0
     @State private var totalCount = 0
     @State private var isProcessing = false
@@ -207,7 +215,7 @@ struct ScanForMediaDialog: View {
 
     /// Add to Playlist takes files only; the copy and move actions also take libraries.
     private var nothingToDo: Bool {
-        scanner.foundFiles.isEmpty && (scanner.foundLibraries.isEmpty || selectedAction == .addToPlaylist)
+        typeFiles.isEmpty && (typeLibraries.isEmpty || selectedAction == .addToPlaylist)
     }
 
     // MARK: - Review View
@@ -220,11 +228,11 @@ struct ScanForMediaDialog: View {
             // His rule, 2026-09-19: "the photos should be copied using the enclosing
             // photolibrarys database to reinstate name and metadata" · "photos copied not
             // moved". Said here, before Execute, not only in the summary afterwards.
-            if !scanner.foundLibraries.isEmpty {
+            if !typeLibraries.isEmpty {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("and \(scanner.foundLibraries.count) Photos \(scanner.foundLibraries.count == 1 ? "library" : "libraries") — their photos come out under their real names and dates, read from each library's own database, into a plain folder named after the library, and are copied, never moved:")
+                    Text("and \(typeLibraries.count) Photos \(typeLibraries.count == 1 ? "library" : "libraries") — their photos come out under their real names and dates, read from each library's own database, flat into Photos/, and are copied, never moved:")
                         .font(.caption)
-                    ForEach(scanner.foundLibraries, id: \.self) { lib in
+                    ForEach(typeLibraries, id: \.self) { lib in
                         Text("• \(lib.lastPathComponent)  —  \(lib.deletingLastPathComponent().path)")
                             .font(.caption2)
                             .foregroundColor(.secondary)
@@ -234,8 +242,8 @@ struct ScanForMediaDialog: View {
                 }
                 .padding(.leading, 4)
             }
-            if scanner.foundFiles.contains(where: { scanner.getMediaType(for: $0) == .photo }) {
-                Text("Photos are always copied, even when the action is Move, and keep the folder they were in.")
+            if selectedType == .photo {
+                Text("Photos are always copied, even when the action is Move, and go flat into Photos/ — no subfolders.")
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .padding(.leading, 4)
@@ -337,6 +345,21 @@ struct ScanForMediaDialog: View {
 
             Divider()
 
+            // Build 83: which media type this scan sorts.
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Media type:")
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                Picker("Media type", selection: $selectedType) {
+                    Text("Audio (\(count(.audio).formatted()) files)").tag(MediaScanner.MediaType.audio)
+                    Text("Video (\(count(.video).formatted()) files)").tag(MediaScanner.MediaType.video)
+                    Text("Photos (\(count(.photo).formatted()) files\(scanner.foundLibraries.isEmpty ? "" : " + \(scanner.foundLibraries.count) \(scanner.foundLibraries.count == 1 ? "library" : "libraries")"))").tag(MediaScanner.MediaType.photo)
+                }
+                .pickerStyle(.radioGroup)
+                .labelsHidden()
+                .help("One media type per scan. Only this type is sorted, and only its folders are made in the target.")
+            }
+
             // Action selection
             VStack(alignment: .leading, spacing: 8) {
                 Text("Action:")
@@ -365,14 +388,21 @@ struct ScanForMediaDialog: View {
                         .font(.subheadline)
                         .fontWeight(.semibold)
 
-                    Picker("Organization", selection: $selectedOrganization) {
-                        ForEach(Organization.allCases, id: \.self) { org in
-                            Text(org.rawValue).tag(org)
+                    if selectedType == .photo {
+                        // Build 83: photos have one shelf — flat, in Photos/.
+                        Text("Photos go flat into Photos/ in the target — no subfolders.")
+                            .font(.callout)
+                            .foregroundColor(.secondary)
+                    } else {
+                        Picker("Organization", selection: $selectedOrganization) {
+                            ForEach(Organization.allCases, id: \.self) { org in
+                                Text(organizationLabel(org)).tag(org)
+                            }
                         }
+                        .pickerStyle(.radioGroup)
+                        // The heading above already says it — his screen showed it twice.
+                        .labelsHidden()
                     }
-                    .pickerStyle(.radioGroup)
-                    // The heading above already says it — his screen showed it twice.
-                    .labelsHidden()
                 }
 
                 // Destination folder picker.
@@ -544,11 +574,11 @@ struct ScanForMediaDialog: View {
             // can pause or cancel individual status bars" · "all at once but i can pause
             // them". They share one name registry, so two bars never claim one name.
             let roots = sourceFolders.map { URL(fileURLWithPath: $0.path) }
-            let libraries = Set(scanner.foundLibraries.map { $0.standardizedFileURL.path })
+            let libraries = Set(typeLibraries.map { $0.standardizedFileURL.path })
             let group = UUID()
             let claims = TargetClaims()
             let target = URL(fileURLWithPath: destinationPath)
-            for part in MediaPlan.groups(of: scanner.foundLibraries + scanner.foundFiles, roots: roots) {
+            for part in MediaPlan.groups(of: typeLibraries + typeFiles, roots: roots) {
                 let libs = part.sources.filter { libraries.contains($0.standardizedFileURL.path) }
                 let files = part.sources.filter { !libraries.contains($0.standardizedFileURL.path) }
                 fileOps.start(kind, sources: libs + files, target: target,
@@ -560,7 +590,7 @@ struct ScanForMediaDialog: View {
         }
 
         phase = .executing
-        totalCount = scanner.foundFiles.count
+        totalCount = typeFiles.count
         processedCount = 0
 
         Task {
@@ -576,7 +606,27 @@ struct ScanForMediaDialog: View {
     }
 
     /// Where each scanned file goes — the rules live in `MediaPlan.build`, shared with the tests.
+    private func count(_ type: MediaScanner.MediaType) -> Int {
+        scanner.foundFiles.filter { scanner.getMediaType(for: $0) == type }.count
+    }
+
+    /// The Organization choices, worded for the type being sorted.
+    private func organizationLabel(_ org: Organization) -> String {
+        let t = selectedType.rawValue
+        let ext = selectedType == .video ? "MP4/, MOV/…" : "MP3/, M4A/…"
+        switch org {
+        case .flatten: return "Flatten (all in one folder)"
+        case .byExtension: return "Folders by Extension (\(ext))"
+        case .byMediaType: return "One \(t)/ folder"
+        case .byMediaTypeThenExtension: return "\(t)/ then Extension (\(t)/\(ext))"
+        }
+    }
+
     private func mediaPlan(files: [URL], libraries: [URL]) -> MediaPlan {
+        // Build 83: a Photos scan always shelves into Photos/, flat.
+        if selectedType == .photo {
+            return MediaPlan.build(files: files, libraries: libraries, sorting: .byType)
+        }
         let sorting: MediaPlan.Sorting
         switch selectedOrganization {
         case .flatten: sorting = .flatten
@@ -590,7 +640,7 @@ struct ScanForMediaDialog: View {
     private func addToPlaylist() async {
         guard let playlistManager = playlistManager else { return }
 
-        for url in scanner.foundFiles {
+        for url in typeFiles {
             guard !scanner.isCancelled else { break }
 
             await MainActor.run {
