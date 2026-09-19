@@ -610,7 +610,9 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
             }
             let identical = same != .differs
             let onMove = kind == .move && bothFiles
-            let mergeOK = onMove && identical
+            // Only when this source can leave: Merge promises BOTH sources are deleted, and a
+            // photo never leaves its folder.
+            let mergeOK = onMove && identical && srcMoves
             let replaceOK = onMove && !identical
             let keepOtherOK = onMove && !identical && srcMoves
 

@@ -286,7 +286,11 @@ private struct FileQuestionView: View {
             } else {
                 differingChoices
             }
-            if question.remainingLikeThis > 0 {
+            if question.mergeOffered {
+                // Identical pairs can be many thousands (a duplicated folder); the count before
+                // comparing cannot tell how many, so the box is always offered here.
+                Toggle("Do the same for every identical pair in this bar", isOn: $applyToAll)
+            } else if question.remainingLikeThis > 0 {
                 Toggle(applyToAllLabel, isOn: $applyToAll)
             }
             Divider()
@@ -332,8 +336,12 @@ private struct FileQuestionView: View {
     /// "i only want to kep one and move both".
     @ViewBuilder private var flattenChoices: some View {
         if question.mergeOffered {
+            // His words, 2026-09-19, after the first wording read as if one copy stayed behind:
+            // "i only ant one to hit the target and BOTH deleted".
             ChoiceRow(title: "Merge",
-                      explanation: "Keep one. It lands here; the identical copy leaves the source once that one has arrived and every byte matches again. Finder tags from both are kept, with the earlier creation date.",
+                      explanation: question.targetIsIncoming
+                        ? "One copy lands in the target. BOTH sources are deleted — from “\(Fmt.folderName(question.source.url))” and from “\(Fmt.folderName(question.target.url))” — only after the copy in the target is checked byte for byte. Finder tags from both are kept."
+                        : "The copy already in the target stays. This source in “\(Fmt.folderName(question.source.url))” is deleted, after it is checked byte for byte against that copy. Finder tags from both are kept.",
                       isDefault: true) { controller.answerFile(.merge, applyToAll: applyToAll) }
         }
         // His question, 2026-09-19: "when it shows two files, hy cant you choose the one to be

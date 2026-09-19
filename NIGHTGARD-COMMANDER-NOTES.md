@@ -521,3 +521,11 @@ files, hy cant you choose the one to be saved?"*
 His ask: *"can it have show in finder so i can see each and play if needed?"* — every side-by-side card
 (file and folder questions) has a small **Show in Finder**; Finder opens with that one selected, Space plays
 or previews it. The popup stays up. Display only; engine untouched.
+
+## Build 79 — Merge says what it does (2026-09-19)
+His correction on 78's screen: *"that is not what it says it says keep one but leaves the source"* — and
+his definition: *"i only ant one to hit the target and BOTH deleted"*. The Merge line now reads: "One copy
+lands in the target. BOTH sources are deleted — from “A” and from “B” — only after the copy in the target
+is checked byte for byte." The "Do the same for every identical pair in this bar" box is always shown for
+Merge (78 hid it when the pre-count was 0). Merge is offered only when the source can leave (never for
+photos), so the sentence is always true.
