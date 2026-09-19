@@ -88,8 +88,12 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
         /// has landed at `landedAt`, this source leaves — removed if every byte matches
         /// (`identical`), otherwise sent to the Trash. `owner` is the source another bar is
         /// carrying there, when it is another bar's. Always run after every transfer.
-        case retire(src: URL, landedAt: URL, identical: Bool, owner: URL?)
+        case retire(src: URL, landedAt: URL, match: RetireMatch, owner: URL?)
     }
+
+    /// How the retiring source was judged the same as the file that landed. Build 88 adds
+    /// `.audioTwin`: same music, different tags — the LARGER of the two is the one kept.
+    enum RetireMatch: Sendable { case bytes, audioTwin, none }
 
     private struct EngineError: LocalizedError {
         let message: String
@@ -289,7 +293,16 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
             let b = try? fm.destinationOfSymbolicLink(atPath: t.url.path)
             return (a != nil && a == b) ? .sameContents : .differs
         }
-        guard s.size == t.size else { return .differs }
+        guard s.size == t.size else {
+            // Build 88: two MP3s of different sizes can still hold the same music — the gap is
+            // the tag block. Read past the tags before calling them different files.
+            if !s.isDirectory && !t.isDirectory,
+               AudioContentCompare.isMP3(s.url), AudioContentCompare.isMP3(t.url) {
+                progress.currentName = "Comparing the audio in " + s.url.lastPathComponent
+                if try await AudioContentCompare.sameAudio(s.url, t.url) { return .sameAudio }
+            }
+            return .differs
+        }
         // Plan 8.5: proven equal on an earlier run and untouched since — not read again.
         if verified.matches(source: s, target: t) { return .verifiedEarlier }
         let equal = try await bytesEqual(s.url, t.url)
@@ -608,13 +621,17 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
                     same = try await compare(s, facts(dst))
                 }
             }
-            let identical = same != .differs
+            let sameAudio = same == .sameAudio
+            let identical = same != .differs && !sameAudio
             let onMove = kind == .move && bothFiles
             // Build 81: Merge is SHOWN for every pair of files — "i want to see merge, full stop" —
             // and USABLE only when they are identical. Merging two different files would throw
             // one away. A source that cannot leave (a library's photo, a guarded folder) stays,
             // which the popup says.
-            let mergeOK = bothFiles && identical
+            // Build 88 — his: "it becomes, mergge all meta data". Same music in two files that
+            // differ only by their tags merges too: the larger one (the one carrying the extra
+            // metadata) is kept, the smaller one's tags are folded into it, both sources go.
+            let mergeOK = bothFiles && (identical || sameAudio)
             let replaceOK = onMove && !identical
             // Build 85 — his: "keep both and replace were not both there". Offered for a library
             // photo too; for one it means "do not bring this one in", and it stays in its library.
@@ -629,7 +646,10 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
                 default: return false
                 }
             }
-            var choice = identical ? flattenForAllIdentical : flattenForAll
+            // Build 88: an audio twin answers with the identical pairs — Merge is the offered
+            // action for both, and `offered()` re-checks every pair before the answer is used,
+            // so a remembered Merge can never land on a pair that is neither.
+            var choice = (identical || sameAudio) ? flattenForAllIdentical : flattenForAll
             if let c = choice, !offered(c) { choice = nil }
             if choice == nil {
                 var question = FileQuestion(kind: kind, source: s, target: otherFacts ?? facts(dst),
@@ -647,7 +667,7 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
                 let answer = await delegate.askFile(question)
                 choice = answer.choice
                 if answer.applyToAll {
-                    if identical { flattenForAllIdentical = answer.choice } else { flattenForAll = answer.choice }
+                    if identical || sameAudio { flattenForAllIdentical = answer.choice } else { flattenForAll = answer.choice }
                 }
             }
             let owner = fromSibling ? incoming : nil
@@ -658,7 +678,7 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
                 dst = uniqueName(for: dst, claimant: src)
             case .merge:
                 if srcMoves {
-                    ops.append(.retire(src: src, landedAt: dst, identical: true, owner: owner))
+                    ops.append(.retire(src: src, landedAt: dst, match: sameAudio ? .audioTwin : .bytes, owner: owner))
                 } else {
                     skip(src, kind == .move
                          ? "Merged: identical to the “\(name)” arriving there. This one stays where it is — photos inside a Photos library are always copied, never moved."
@@ -667,7 +687,7 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
                 return nil
             case .keepOther:
                 if srcMoves {
-                    ops.append(.retire(src: src, landedAt: dst, identical: false, owner: owner))
+                    ops.append(.retire(src: src, landedAt: dst, match: .none, owner: owner))
                 } else {
                     // ⛔ Never delete from inside a Photos library (or a guarded folder): the
                     // other one is kept, this one is simply not brought in and stays put.
@@ -693,7 +713,7 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
                     if dropPlannedStep(of: other, to: dst) {
                         // The other one was going to move here; now it leaves the source for
                         // the Trash instead — once this one has landed.
-                        ops.append(.retire(src: other, landedAt: dst, identical: false, owner: nil))
+                        ops.append(.retire(src: other, landedAt: dst, match: .none, owner: nil))
                     }
                 }
             default:
@@ -1355,8 +1375,8 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
             log.entries.append(.removedDuplicate(path: src.path, keptAt: keptAt.path))
             summary.notes.append(.init(path: src.path, reason: "Removed from the source — the identical file is already in the target, as you chose."))
 
-        case let .retire(src, landedAt, identical, owner):
-            try await retire(src: src, landedAt: landedAt, identical: identical, owner: owner)
+        case let .retire(src, landedAt, match, owner):
+            try await retire(src: src, landedAt: landedAt, match: match, owner: owner)
 
         case let .discardSourceDSStore(src):
             try? fm.removeItem(at: src)
@@ -1459,11 +1479,12 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
 
     /// The kept file must be in place before this one leaves — another bar may still be
     /// carrying it, so wait for it (Pause and Cancel still work) unless that bar has ended.
-    private func retire(src: URL, landedAt: URL, identical: Bool, owner: URL?) async throws {
+    private func retire(src: URL, landedAt: URL, match: RetireMatch, owner: URL?) async throws {
+        let identical = match == .bytes
         progress.currentName = src.lastPathComponent
         while !exists(landedAt) {
             guard let owner, let claims = sharedTargets, !claims.hasFinished(owner) else {
-                skip(src, "Left in the source: the “\(landedAt.lastPathComponent)” it was \(identical ? "being merged with" : "giving way to") never arrived.")
+                skip(src, "Left in the source: the “\(landedAt.lastPathComponent)” it was \(match == .none ? "giving way to" : "being merged with") never arrived.")
                 return
             }
             progress.currentName = "Waiting for “\(landedAt.lastPathComponent)” from another bar…"
@@ -1471,7 +1492,9 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
             try await gate()
             try? await Task.sleep(for: .seconds(2))
         }
-        if identical {
+        if match == .audioTwin {
+            try await retireAudioTwin(src: src, landedAt: landedAt)
+        } else if identical {
             // Compared again here, after it landed: this deletes, so nothing is assumed.
             guard try await bytesEqual(src, landedAt) else {
                 throw EngineError(message: "“\(src.lastPathComponent)” is not byte-for-byte identical to the one that arrived, so it was NOT removed from the source.")
@@ -1486,6 +1509,68 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
             retiredCount += 1
         }
         await report()
+    }
+
+    /// Build 88 — two MP3s holding the same music, differing only in their tags. His words:
+    /// *"the larger one probably has meta data"* · *"it becomes, mergge all meta data"*.
+    ///
+    /// **The larger file is the one kept**, because the extra bytes ARE the metadata, and the
+    /// other file's tags are folded into it so nothing is lost from either side. When the
+    /// larger one is the source, it takes the target's place — the copy that already landed is
+    /// the one removed.
+    ///
+    /// ⛔ The audio is compared again HERE, after the file landed, exactly as the byte-for-byte
+    /// path does: this step deletes, so nothing is taken on trust from the planning phase.
+    private func retireAudioTwin(src: URL, landedAt: URL) async throws {
+        guard try await AudioContentCompare.sameAudio(src, landedAt) else {
+            throw EngineError(message: "“\(src.lastPathComponent)” no longer holds the same audio as the one that arrived, so it was NOT removed from the source.")
+        }
+        let srcSize = facts(src).size, landedSize = facts(landedAt).size
+        if srcSize > landedSize {
+            // The source carries the fuller tags: it becomes the copy in the target.
+            mergeAudioTags(from: landedAt, into: src)
+            mergeMetadata(from: landedAt, into: src)
+            let holding = landedAt.deletingLastPathComponent()
+                .appendingPathComponent(".\(landedAt.lastPathComponent).ngc-twin-\(UUID().uuidString.prefix(8))")
+            try fm.moveItem(at: landedAt, to: holding)
+            do {
+                try fm.copyItem(at: src, to: landedAt)
+            } catch {
+                try? fm.moveItem(at: holding, to: landedAt)   // put the landed copy back
+                throw error
+            }
+            var arrivedIntact = try await AudioContentCompare.sameAudio(src, landedAt)
+            if !arrivedIntact { arrivedIntact = try await bytesEqual(src, landedAt) }
+            guard arrivedIntact else {
+                try? fm.removeItem(at: landedAt)
+                try? fm.moveItem(at: holding, to: landedAt)
+                throw EngineError(message: "“\(src.lastPathComponent)” could not be verified in the target, so nothing was removed.")
+            }
+            try? fm.removeItem(at: holding)
+            try fm.removeItem(at: src)
+        } else {
+            mergeAudioTags(from: src, into: landedAt)
+            mergeMetadata(from: src, into: landedAt)
+            try fm.removeItem(at: src)
+        }
+        log.entries.append(.removedDuplicate(path: src.path, keptAt: landedAt.path))
+        mergedCount += 1
+    }
+
+    /// The tag union itself: every field the kept file is missing is taken from the other, and
+    /// its own values are never overwritten. Artwork counts as a field. MP3 only — an MP4
+    /// container (.m4a, .m4p, .m4r) never reaches here, because its audio is never compared
+    /// apart from its tags.
+    private func mergeAudioTags(from other: URL, into kept: URL) {
+        guard AudioContentCompare.isMP3(kept), AudioContentCompare.isMP3(other) else { return }
+        let mine = AudioTags.read(kept), theirs = AudioTags.read(other)
+        guard let merged = AudioTags.fillingGaps(in: mine, from: theirs) else { return }
+        do {
+            try ID3TagWriter.write(metadata: merged, to: kept)
+        } catch {
+            summary.notes.append(.init(path: kept.path,
+                reason: "Kept as the fuller copy, but the other file's tags could not be written into it: \(error.localizedDescription)"))
+        }
     }
 
     /// His "merge the metadata but keeep one file": Finder tags from both, and the earlier

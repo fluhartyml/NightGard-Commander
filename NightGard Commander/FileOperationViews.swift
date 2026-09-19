@@ -335,7 +335,9 @@ private struct FileQuestionView: View {
             if question.mergeEnabled {
                 // Identical pairs can be many thousands (a duplicated folder); the count before
                 // comparing cannot tell how many, so the box is always offered here.
-                Toggle("Do the same for every identical pair in this bar", isOn: $applyToAll)
+                Toggle(question.isSameAudio
+                       ? "Do the same for every pair in this bar that holds the same audio"
+                       : "Do the same for every identical pair in this bar", isOn: $applyToAll)
             } else if question.remainingLikeThis > 0 {
                 Toggle(applyToAllLabel, isOn: $applyToAll)
             }
@@ -367,6 +369,7 @@ private struct FileQuestionView: View {
         case .sameContents: text += " These two are identical — every byte was compared."
         case .verifiedEarlier: text += " These two are identical — Commander compared this exact pair on an earlier run."
         case .sameSizeAndDate: text += " These two have the same size and date; their contents were not compared."
+        case .sameAudio: text += " These two hold the same audio — only their tags differ."
         case .differs: text += question.source.isDirectory || question.target.isDirectory ? "" : " These two are different files."
         }
         return text
@@ -375,11 +378,18 @@ private struct FileQuestionView: View {
     /// What Merge will do — or, greyed out, why it cannot.
     private var mergeText: String {
         let here = Fmt.folderName(question.source.url), there = Fmt.folderName(question.target.url)
+        if question.isSameAudio && question.mergeEnabled {
+            let keeper = question.source.size >= question.target.size ? here : there
+            let giver  = question.source.size >= question.target.size ? there : here
+            return question.kind == .move
+                ? "Same music, different tags. The larger one, from “\(keeper)”, is kept in the target, and the tags from “\(giver)” are written into it, so no tag from either is lost. BOTH sources are deleted, only after the audio is compared again."
+                : "Same music, different tags. One copy lands — the larger of the two, carrying the tags from both. Nothing is deleted: this is a copy."
+        }
         guard question.mergeEnabled else {
             let a = question.source.size, b = question.target.size
             let how = a == b ? "the same size, but their contents differ"
                              : "\(Fmt.plural(Int(abs(a - b)), "byte")) apart in size"
-            return "Not available: these two are different files (\(how)). Merge only joins identical files, so nothing is ever thrown away. Show in Finder lets you look at both."
+            return "Not available: these two are different files (\(how)). Merge only joins files that hold the same thing — for MP3s, the music itself was compared too, and it differs. Nothing is ever thrown away. Show in Finder lets you look at both."
         }
         if question.kind != .move {
             return "One copy lands in the target. Nothing is deleted — this is a copy."
@@ -452,6 +462,10 @@ private struct FileQuestionView: View {
         case .verifiedEarlier:
             Text("These two files are identical").font(.title2).bold()
             Text("Commander copied or compared this exact pair on an earlier run, and neither file's size or date has changed since, so it was not read again.")
+                .foregroundStyle(.secondary)
+        case .sameAudio:
+            Text("Same music, different tags").font(.title2).bold()
+            Text("These two hold exactly the same audio — only their tags differ, which is why their sizes do not match. Merge keeps the larger one and writes both sets of tags into it.")
                 .foregroundStyle(.secondary)
         case .differs:
             Text("“\(question.source.name)” is already in “\(Fmt.folderName(question.target.url))”")

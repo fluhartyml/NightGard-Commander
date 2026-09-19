@@ -328,6 +328,11 @@ nonisolated struct FileQuestion: Sendable {
         /// or date has changed since — so it is not read again (plan 8.5: a resumed Copy must
         /// not re-read everything it already copied over the network).
         case verifiedEarlier
+        /// Build 88 — two MP3s whose AUDIO FRAMES are identical while the files are not: the
+        /// difference is all tags. His words on a 1,124-byte gap: "the larger one probably has
+        /// meta data" · "it becomes, mergge all meta data". Merge is offered for these, keeps
+        /// the larger file, and folds the smaller one's tags into it.
+        case sameAudio
     }
 
     let kind: FileOpKind
@@ -360,7 +365,11 @@ nonisolated struct FileQuestion: Sendable {
     /// The other file is still in a source folder (not yet in the target).
     var otherGoesToTrash = true
 
-    var isIdentical: Bool { sameness != .differs }
+    /// Identical means every byte. Build 88's `.sameAudio` pair is NOT identical — the files
+    /// differ, only their music does not — so it keeps Replace and Keep the Other One.
+    var isIdentical: Bool { sameness != .differs && sameness != .sameAudio }
+    /// Build 88: same music, different tags. Merge is enabled for these and says so.
+    var isSameAudio: Bool { sameness == .sameAudio }
 }
 
 nonisolated enum FileChoice: Sendable {

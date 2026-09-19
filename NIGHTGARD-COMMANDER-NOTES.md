@@ -618,3 +618,36 @@ codexes"* · *"yes please"*. A fifth Organization choice, Video scans only: **Vi
 - Tested: 15 real videos on the Raid read correctly (read-only); an engine sort of copies built exactly
   Video/1080p/H.264, Video/SD/H.264, Video/Unknown. Earlier suites ALL PASSED.
 His plan: *"we are going to sort one media type at a time, i think first we will try photos then video"*.
+
+## Build 88 — same music, different tags: Merge keeps the larger and merges the tags (2026-09-19)
+
+**His words, on a Bob Sinclar pair 1,124 bytes apart that Merge refused:**
+*"the larger one probably has meta data"* · ***"it becomes, mergge all meta data"***
+
+Build 81 greyed Merge out for them, correctly by its own rule — Merge means *identical, so
+nothing can be lost*, and by bytes they are not identical. **But the music was the same and the
+gap was all tags**, which is the ordinary case for a library ripped or downloaded twice.
+
+**What 88 does.** When two MP3s of different sizes clash, Commander reads past the tag blocks
+(ID3v2 at the front, ID3v1 and APE at the end) and compares **the audio frames only**. If those
+match, the pair is `.sameAudio`:
+
+- **Merge is enabled**, and says what it will do in his terms: the larger file is kept, the
+  other's tags are written into it, both sources are deleted.
+- **The LARGER file is the one kept** — the extra bytes ARE the metadata. When the larger one is
+  the source, it takes the target's place; the copy that already landed is the one removed.
+- **The tags are a union:** every field the kept file is missing (title, artist, album, genre,
+  year, track, artwork) is filled from the other. **Its own values are never overwritten.**
+- **Keep This One / Keep the Other One stay offered** — these two files genuinely differ, so
+  they are not presented as identical.
+- The audio is compared **again** at the moment of deletion, exactly as the byte path does.
+
+⛔ **MP3 only, deliberately.** In an MP4 container (.m4a, .m4p, .m4r) the tags are atoms
+interleaved with the audio, so "read past the tag block" has no meaning. Those pairs keep the
+strict byte-for-byte rule and Merge stays greyed out for them.
+
+**Tested** (`t88`, on real MP3s copied off the Raid and tagged two ways): the twin is recognised;
+**two different songs are not** (negative control, both directions); the larger is kept whichever
+order it arrives in; tags from both sides survive; the kept file still holds the original audio;
+byte-identical pairs still merge as in 77; an .m4a pair of different sizes stays "differs".
+Regression: t77 (27 checks), the media suite and the 73-check engine suite Mac→Raid, ALL PASSED.
