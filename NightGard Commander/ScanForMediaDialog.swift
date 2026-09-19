@@ -67,6 +67,16 @@ struct ScanForMediaDialog: View {
     /// is open still offers it.
     private var mediaLibraryPath: String { ShazamSettings.shared.musicLibraryPath }
 
+    /// Build 89 — where the chosen action actually writes. ⛔ The space check used to read
+    /// `destinationPath` whatever the action was, so a designated-folder Move reported the
+    /// free space of the OTHER PANE. His right pane sat at `/Volumes`, which is the Mac's own
+    /// disk: the sheet said 144.99 GB available while the real target, Cold Storage, had 10 TiB.
+    /// A space warning measured against the wrong drive is worse than none — it can refuse a
+    /// move that fits and wave through one that does not.
+    private var writeTargetPath: String {
+        selectedAction.usesMediaLibrary ? mediaLibraryPath : destinationPath
+    }
+
     /// The designated folder can sit on a drive that is not mounted. Offering it as a
     /// destination in that state would fail at Execute, after the scan.
     private var mediaLibraryIsReachable: Bool {
@@ -258,7 +268,7 @@ struct ScanForMediaDialog: View {
                     .font(.subheadline)
                     .foregroundColor(.secondary)
 
-                if selectedAction != .addToPlaylist, let available = scanner.availableSpace(at: destinationPath) {
+                if selectedAction != .addToPlaylist, let available = scanner.availableSpace(at: writeTargetPath) {
                     Spacer()
                     let hasSpace = available > scanner.totalSize
                     HStack(spacing: 4) {
@@ -272,7 +282,7 @@ struct ScanForMediaDialog: View {
             }
 
             // Space warning
-            if selectedAction != .addToPlaylist, let available = scanner.availableSpace(at: destinationPath), available < scanner.totalSize {
+            if selectedAction != .addToPlaylist, let available = scanner.availableSpace(at: writeTargetPath), available < scanner.totalSize {
                 HStack(spacing: 8) {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .foregroundColor(.orange)

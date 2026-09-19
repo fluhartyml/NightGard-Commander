@@ -651,3 +651,25 @@ strict byte-for-byte rule and Merge stays greyed out for them.
 order it arrives in; tags from both sides survive; the kept file still holds the original audio;
 byte-identical pairs still merge as in 77; an .m4a pair of different sizes stays "differs".
 Regression: t77 (27 checks), the media suite and the 73-check engine suite Mac→Raid, ALL PASSED.
+
+## Build 89 — the space check was measuring the wrong drive (2026-09-19)
+
+**Caught by him on his own screen:** *"verify ny screen, it looks like its not right."* The scan
+sheet said **Available: 144.99 GB** with the destination line reading Cold Storage, which has
+**11.51 TB** free.
+
+**Cause.** The free-space figure read `destinationPath` — the OTHER PANE — whatever the action
+was. His right pane sat at `/Volumes`, which lives on the Mac's own disk (135 GiB free, the
+144.99 GB shown). The two designated-folder actions do not write to the other pane at all; they
+write to the media folder named in Settings.
+
+**Fix.** A `writeTargetPath`: the media folder for the two designated-folder actions, the other
+pane otherwise. Both the figure and the "Insufficient disk space" warning now read it.
+
+⚠️ **Why this mattered more than a cosmetic number:** the same value drives the warning, so it
+could refuse a move that fits, or wave through one that does not. A check measured against the
+wrong drive is worse than no check.
+
+**Tested:** `/Volumes` reports 144.93 GB and the media folder 11.51 TB — different filesystems,
+exactly the pair of numbers on his screen — and an unreachable target reports nothing rather
+than a wrong number.
