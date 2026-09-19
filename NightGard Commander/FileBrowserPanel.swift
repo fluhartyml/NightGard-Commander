@@ -591,6 +591,7 @@ struct FileBrowserPanel: View {
                             Button("Move \(selectedItems.count) Items to Other Pane") {
                                 moveSelectedToOtherPane()
                             }
+                            mediaLibraryButtons(fileSystem.files.filter { selectedItems.contains($0.id) })
                             Divider()
                             Button("Delete \(selectedItems.count) Items") {
                                 deleteSelectedItems()
@@ -632,6 +633,7 @@ struct FileBrowserPanel: View {
                             Button("Move to Other Pane") {
                                 runFileOperation(.move, [item])
                             }
+                            mediaLibraryButtons([item])
                             Divider()
                             Button("Delete") {
                                 deleteItem(item: item)
@@ -1875,7 +1877,28 @@ struct FileBrowserPanel: View {
     /// Copy or move to the other pane through FileOperationEngine: every clash is asked
     /// about before anything is touched, a move verifies each copy before deleting, and a
     /// summary says what happened. (Nuclear mode and the M key keep their own fast path.)
-    private func runFileOperation(_ kind: FileOpKind, _ items: [FileItem]) {
+    /// His ask, 2026-09-19: "if im in a pane and i just want to move the selected file or
+    /// folder to the designated media folder why cant i?" · "i want add and move to media
+    /// library options added please". Exactly what is selected, as is, into the folder
+    /// designated in Settings — a job with its own bar, like any copy or move.
+    @ViewBuilder
+    private func mediaLibraryButtons(_ items: [FileItem]) -> some View {
+        let library = ShazamSettings.shared.musicLibraryPath
+        var isDir: ObjCBool = false
+        let reachable = !library.isEmpty && FileManager.default.fileExists(atPath: library, isDirectory: &isDir) && isDir.boolValue
+        let why = library.isEmpty ? " (none designated)" : (reachable ? "" : " (its drive is not connected)")
+        let count = items.count == 1 ? "" : " \(items.count) Items"
+        Button("Add\(count) to Media Library\(why)") {
+            runFileOperation(.copy, items, to: library)
+        }
+        .disabled(!reachable)
+        Button("Move\(count) to Media Library\(why)") {
+            runFileOperation(.move, items, to: library)
+        }
+        .disabled(!reachable)
+    }
+
+    private func runFileOperation(_ kind: FileOpKind, _ items: [FileItem], to destination: String? = nil) {
         guard let fileOps, !items.isEmpty else { return }
 
         // DJ CURATION: moving the playing track stops it; the next one plays afterwards,
@@ -1894,7 +1917,7 @@ struct FileBrowserPanel: View {
 
         fileOps.start(kind,
                       sources: items.map { URL(fileURLWithPath: $0.path) },
-                      target: URL(fileURLWithPath: otherPanePath)) { _ in
+                      target: URL(fileURLWithPath: destination ?? otherPanePath)) { _ in
             // Only what THIS job took leaves the selection — another copy or move may be
             // being picked while it ran. Both panes were already refreshed in place.
             if kind == .move { selectedItems.subtract(items.map(\.id)) }

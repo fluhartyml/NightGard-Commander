@@ -425,3 +425,12 @@ because if it takes an hour to copy from source to destination it is too long"* 
   with a bar, Pause and Cancel; the summary says why. 2,000 files: 51.7 s, every item counted.
 - ⛔ If the Trash refuses an item, NOTHING is deleted — it never falls back to erasing.
 - Both delete paths (right-click, ⌘8) go through `FileOperationController.delete`.
+
+## Build 72 — Add / Move to Media Library on the right-click menu (2026-09-19)
+His ask: *"if im in a pane and i just want to move the selected file or folder to the designated media
+folder why cant i?"* · *"i want add and move to media library options added please"*.
+- **Add to Media Library** (copy) and **Move to Media Library**, for one item or a selection.
+- Exactly what is selected, AS IS, into the designated folder — no media sorting (Claude's reading of
+  "just move the selected file or folder"; the sorting question was asked and not answered).
+- A normal job: bar, Pause, clash questions, read-back check, move log. Greyed out, with the reason in the
+  label, when nothing is designated or its drive is not connected.
