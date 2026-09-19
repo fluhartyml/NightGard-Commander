@@ -349,5 +349,13 @@ more folders between using the same two panes without leaving them on the same t
    ⬜ "Unstable" still to be defined with him — candidates macOS reports directly: memory pressure,
    `ProcessInfo.thermalState` (serious/critical), low battery off power, a drive nearly full, a network
    drive that stopped answering. A pause HE made must never be auto-resumed.
+   **His further spec, 21:5x:** ***"i think we also could use that iser feedback bar at the bottom that
+   tells the user comprehensively what tasks are running in the commander the pause warning should be on
+   each status bar and the user can override and resumw at their own rish"***
+   - **An overall feedback bar at the bottom** — every task Commander is running, in one place (e.g.
+     "4 tasks — 2 moving, 2 paused: system unstable — 16 GB of 91 GB").
+   - **The pause warning on EACH job's own bar**, not only in the summary line.
+   - **Override:** he can Resume a governor-paused job anyway, **at his own risk** — the button says so.
+     An overridden job is not re-paused by the governor for the same condition.
 4. **Resizable panes** — *"can these panes be resized?"* No: fixed halves, and four bars took the bottom
    half of the window. Offered: a draggable divider and bars that fold to one line.
