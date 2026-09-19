@@ -19,10 +19,19 @@ import Foundation
 
 nonisolated enum FileOpKind: String, Sendable, Codable {
     case copy, move
+    /// Build 70: Delete runs as a job too, off the main thread (it beach-balled on a
+    /// 2,655-folder network delete, 2026-09-19).
+    case delete
 
-    var verb: String { self == .copy ? "Copy" : "Move" }
-    var gerund: String { self == .copy ? "Copying" : "Moving" }
-    var pastTense: String { self == .copy ? "copied" : "moved" }
+    var verb: String {
+        switch self { case .copy: "Copy"; case .move: "Move"; case .delete: "Delete" }
+    }
+    var gerund: String {
+        switch self { case .copy: "Copying"; case .move: "Moving"; case .delete: "Deleting" }
+    }
+    var pastTense: String {
+        switch self { case .copy: "copied"; case .move: "moved"; case .delete: "deleted" }
+    }
 }
 
 /// Plan section 7. A normal Copy/Move keeps the folder tree; the other two flatten it.

@@ -86,6 +86,21 @@ final class FileOperationController {
         begin(job, sources: sources, target: target, onFinish: onFinish) { await engine.run() }
     }
 
+    /// Delete as a job (build 70): Trash on a drive attached to this Mac, permanent on a
+    /// network drive. Off the main thread, one bar, Pause and Cancel like the others.
+    func delete(_ items: [URL], onFinish: ((FileOpSummary) -> Void)? = nil) {
+        guard !items.isEmpty else { return }
+        if let refusal = refusal(for: items, kind: .delete) {
+            show(.summary(refusal), for: nil)
+            return
+        }
+        let job = FileOperationJob(kind: .delete, mode: .standard, isUndo: false, footprint: items)
+        let parent = items[0].deletingLastPathComponent()
+        let engine = FileOperationEngine(kind: .delete, sources: items, targetDir: parent,
+                                         control: job.control, delegate: job)
+        begin(job, sources: items, target: nil, onFinish: onFinish) { await engine.run() }
+    }
+
     /// Extract from a Photos library (7.6): asks Copy or Move and the file type first.
     func offerExtract(library: URL, target: URL, onFinish: ((FileOpSummary) -> Void)? = nil) {
         guard PhotosLibraryReader.isPhotosLibrary(library) else {

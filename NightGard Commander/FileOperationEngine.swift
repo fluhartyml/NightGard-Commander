@@ -169,6 +169,7 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
     @concurrent
     func run() async -> FileOpSummary {
         if undoLog != nil { return await runUndo() }
+        if kind == .delete { return await runDelete() }
 
         do {
             let valid = validatedSources()
@@ -661,6 +662,108 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
             ops.append(.extract(src: item.src, dst: dst, move: move,
                                 format: item.convert ? format : .original, date: item.date, size: s.size))
         }
+    }
+
+    // MARK: - Delete (build 70)
+
+    /// ⭐ HIS CONDITION, 2026-09-19: "only if deleting to trash doesnt copy all the files to
+    /// the trashcan and references because if it takes an hour to copy from source to
+    /// destination it is too long". It does not copy: on a drive attached to this Mac the
+    /// Trash is a folder ON THAT DRIVE and trashing is a rename — instant at any size.
+    /// A network drive has no Trash (Finder says the same), so there the delete stays
+    /// permanent, as it always was — now off the main thread, with a bar, Pause and Cancel.
+    /// ⛔ If the Trash refuses an item, NOTHING is deleted — it never falls back to erasing.
+    private func runDelete() async -> FileOpSummary {
+        // Named on the finished popup — his ask, 2026-09-19: "it should say the name of the
+        // parent folder or file i selected to delete as confirmation because this popup
+        // doesnt say".
+        summary.sources = sources.map(\.path)
+        do {
+            progress.phase = .checking
+            var trashable: [URL] = []
+            var permanent: [URL] = []
+            for src in sources where exists(src) {
+                if isLocalVolume(src) { trashable.append(src) } else { permanent.append(src) }
+            }
+            // Count what a permanent delete will remove, so its bar means something.
+            var inside: [String: [URL]] = [:]
+            for root in permanent where facts(root).isDirectory && !facts(root).isSymlink {
+                var list: [URL] = []
+                if let walker = fm.enumerator(at: root, includingPropertiesForKeys: nil, options: [], errorHandler: { _, _ in true }) {
+                    while let url = walker.nextObject() as? URL {
+                        try checkCancelled()
+                        list.append(url)
+                        progress.itemsChecked += 1
+                        progress.currentName = url.lastPathComponent
+                        await report()
+                    }
+                }
+                inside[root.path] = list
+            }
+            progress.filesTotal = trashable.count + permanent.count + inside.values.reduce(0) { $0 + $1.count }
+            progress.phase = .transferring
+            runningSince = Date()
+
+            for src in trashable {
+                try await gate()
+                try checkCancelled()
+                progress.currentName = src.lastPathComponent
+                await report()
+                var landed: NSURL?
+                do {
+                    try fm.trashItem(at: src, resultingItemURL: &landed)
+                    log.entries.append(.trashed(original: src.path, trashPath: landed?.path ?? ""))
+                    summary.filesTransferred += 1
+                } catch {
+                    summary.failed.append(.init(path: src.path,
+                        reason: "Could not be moved to the Trash, so it was NOT deleted: \(error.localizedDescription)"))
+                }
+                progress.filesDone += 1
+                saveLogIfDue()
+            }
+            if summary.filesTransferred > 0 {
+                summary.notes.append(.init(path: trashable.first?.path ?? "",
+                    reason: "Moved to the Trash on its own drive — instant, nothing was copied. Empty the Trash to free the space."))
+            }
+
+            var erased = 0
+            for root in permanent {
+                // Deepest first: the walk lists a folder before what is in it, so reversed,
+                // everything inside a folder goes before the folder itself.
+                for item in (inside[root.path] ?? []).reversed() + [root] {
+                    try await gate()
+                    try checkCancelled()
+                    progress.currentName = item.lastPathComponent
+                    do {
+                        try fm.removeItem(at: item)
+                    } catch where exists(item) {
+                        summary.failed.append(.init(path: item.path, reason: error.localizedDescription))
+                    } catch {}
+                    progress.filesDone += 1
+                    await report()
+                }
+                if !exists(root) {
+                    erased += 1
+                    summary.filesTransferred += 1
+                    log.entries.append(.deleted(original: root.path))
+                }
+                saveLogIfDue()
+            }
+            if erased > 0 {
+                summary.notes.append(.init(path: permanent.first?.path ?? "",
+                    reason: "Deleted permanently — a network drive has no Trash."))
+            }
+        } catch is FileOpCancelled {
+            summary.cancelled = true
+            log.cancelled = true
+        } catch {
+            summary.failed.append(.init(path: sources.first?.path ?? "", reason: error.localizedDescription))
+        }
+        progress.phase = .finishing
+        await report(force: true)
+        saveLog()
+        summary.logURL = logURL
+        return summary
     }
 
     // MARK: - Plan: Scan for Media (build 68)

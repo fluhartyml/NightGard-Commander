@@ -548,6 +548,16 @@ private struct SummaryView: View {
             Text(title).font(.title2).bold()
             Text(headline).font(.title3)
                 .fixedSize(horizontal: false, vertical: true)  // it was cut off at "was lef…" (2026-09-18)
+            // A delete names exactly what was selected and where it was.
+            if summary.kind == .delete, !summary.sources.isEmpty {
+                Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 10, verticalSpacing: 4) {
+                    GridRow {
+                        Text("Deleted").foregroundStyle(.secondary)
+                        Text(fromText).textSelection(.enabled)
+                    }
+                }
+                .fixedSize(horizontal: false, vertical: true)
+            }
             if !summary.wasUndo, !summary.sources.isEmpty, let target = summary.target {
                 Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 10, verticalSpacing: 4) {
                     GridRow {
@@ -616,11 +626,17 @@ private struct SummaryView: View {
     }
 
     private var headline: String {
-        let what = Fmt.plural(summary.filesTransferred, "item")
+        var what = Fmt.plural(summary.filesTransferred, "item")
         let verb = summary.wasUndo ? "put back" : summary.kind.pastTense
+        if summary.kind == .delete, summary.filesTransferred == 1, summary.sources.count == 1 {
+            what = "“\((summary.sources[0] as NSString).lastPathComponent)”"
+        }
         var line = "\(what) \(verb)"
         if summary.bytesTransferred > 0 { line += " (\(Fmt.size(summary.bytesTransferred)))" }
-        if summary.cancelled { line += " before you stopped it. Nothing half-copied was left behind." }
+        if summary.cancelled {
+            line += summary.kind == .delete ? " before you stopped it. The rest was not touched."
+                                            : " before you stopped it. Nothing half-copied was left behind."
+        }
         return line + (summary.cancelled ? "" : ".")
     }
 
@@ -636,8 +652,13 @@ private struct SummaryView: View {
                             Text(item.reason).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                         }
                         Spacer()
+                        // His report, 2026-09-19: "that \"show\" button does nothing" — on a
+                        // deleted item it opened the parent folder the pane already showed.
+                        // Nothing left to show, so no button; a failed delete still has one.
+                        if summary.kind != .delete || FileManager.default.fileExists(atPath: item.path) {
                         Button("Show") {
                             controller.onReveal?(URL(fileURLWithPath: item.path).deletingLastPathComponent())
+                        }
                         }
                     }
                     .contextMenu { Button("Show in Finder") { FinderReveal.show([item.path]) } }
@@ -684,7 +705,7 @@ struct FileOperationProgressBar: View {
     var body: some View {
         let p = job.progress
         HStack(spacing: 14) {
-            Image(systemName: job.kind == .move ? "arrow.right.doc.on.clipboard" : "doc.on.doc")
+            Image(systemName: job.kind == .delete ? "trash" : job.kind == .move ? "arrow.right.doc.on.clipboard" : "doc.on.doc")
                 .font(.title2)
             VStack(alignment: .leading, spacing: 4) {
                 Text(line(p)).lineLimit(1).truncationMode(.middle)
@@ -710,8 +731,8 @@ struct FileOperationProgressBar: View {
         .background(Color.accentColor.opacity(0.08))
         .contextMenu {
             if !job.sources.isEmpty {
-                Button(job.sources.count == 1 ? "Show What Is Being \(job.kind == .move ? "Moved" : "Copied") in Finder"
-                                              : "Show the \(job.sources.count) Items Being \(job.kind == .move ? "Moved" : "Copied") in Finder") {
+                Button(job.sources.count == 1 ? "Show What Is Being \(job.kind.pastTense.capitalized) in Finder"
+                                              : "Show the \(job.sources.count) Items Being \(job.kind.pastTense.capitalized) in Finder") {
                     FinderReveal.show(job.sources.map(\.path))
                 }
             }

@@ -797,13 +797,8 @@ struct ContentView: View {
         let itemsToDelete = activeFocusedFileSystem.files.filter { selectedIDs.contains($0.id) }
         guard !itemsToDelete.isEmpty else { return }
 
-        for item in itemsToDelete {
-            do {
-                try activeFocusedFileSystem.deleteItem(at: item.path)
-            } catch {
-                print("Error deleting \(item.name): \(error.localizedDescription)")
-            }
-        }
+        // Build 70: a job with its own bar, off the main thread (see FileOperationEngine.runDelete).
+        fileOps.delete(itemsToDelete.map { URL(fileURLWithPath: $0.path) })
 
         // Clear selection
         if focusedPane == .left {

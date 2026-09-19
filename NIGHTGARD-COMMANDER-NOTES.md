@@ -413,3 +413,15 @@ usually so many photos vs other media types and they usually have obscure names"
 - Rules live in `MediaPlan.build`, shared by the dialog and the test. Media suite ALL PASSED on Mac/Raid/Cold Storage.
 - ⚠️ Known edge: rescanning a destination that already holds extracted libraries would re-shelve each
   Live Photo's .mov as a video. Not fixed; only matters if the result folder itself is scanned again.
+
+## Build 70 — Delete is a job, and goes to the Trash where there is one (2026-09-19)
+
+**Why:** a 2,655-folder delete on Cold Storage beach-balled the window — Delete ran on the main thread.
+**His condition:** *"only if deleting to trash doesnt copy all the files to the trashcan and references
+because if it takes an hour to copy from source to destination it is too long"* — **it does not copy.**
+- Drive attached to this Mac (Mac drive, Raid) → **Trash**, which lives on that same drive: a rename.
+  **Measured:** 2,000 files trashed in 0.01 s (Mac) / 0.04 s (Raid), SAME inode in the Trash.
+- Network drive (Cold Storage) → **permanent**, as before (it has no Trash) — now off the main thread
+  with a bar, Pause and Cancel; the summary says why. 2,000 files: 51.7 s, every item counted.
+- ⛔ If the Trash refuses an item, NOTHING is deleted — it never falls back to erasing.
+- Both delete paths (right-click, ⌘8) go through `FileOperationController.delete`.

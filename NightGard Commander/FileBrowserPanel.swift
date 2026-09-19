@@ -1500,19 +1500,19 @@ struct FileBrowserPanel: View {
         // Don't update lastSelectedItem - keep the anchor for continued shift-clicks
     }
 
+    /// Build 70: a job, not a loop on the main thread — a 2,655-folder network delete
+    /// beach-balled the window on 2026-09-19. Trash on an attached drive, permanent on a
+    /// network drive (which has no Trash).
     private func deleteItem(item: FileItem) {
-        do {
-            try fileSystem.deleteItem(at: item.path)
-        } catch {
-            print("Error deleting item: \(error)")
-        }
+        guard let fileOps else { return }
+        fileOps.delete([URL(fileURLWithPath: item.path)])
+        selectedItems.remove(item.id)
     }
 
     private func deleteSelectedItems() {
+        guard let fileOps else { return }
         let itemsToDelete = fileSystem.files.filter { selectedItems.contains($0.id) }
-        for item in itemsToDelete {
-            deleteItem(item: item)
-        }
+        fileOps.delete(itemsToDelete.map { URL(fileURLWithPath: $0.path) })
         selectedItems.removeAll()
     }
 
