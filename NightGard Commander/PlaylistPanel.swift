@@ -85,6 +85,10 @@ struct PlaylistPanel: View {
                             onFocus()
                         }
                         .contextMenu {
+                            Button("Show in Finder") {
+                                FinderReveal.show([item.path])
+                            }
+                            Divider()
                             Button("Remove from Playlist") {
                                 if let index = playlistManager.items.firstIndex(where: { $0.id == item.id }) {
                                     playlistManager.removeItem(at: IndexSet(integer: index))

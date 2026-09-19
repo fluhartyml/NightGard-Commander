@@ -28,6 +28,9 @@ final class FileOperationJob: Identifiable, FileOpDelegate {
     /// Every place this job reads from or writes to. A second job whose footprint overlaps
     /// this one is refused rather than raced — two jobs must never touch the same item.
     let footprint: [URL]
+    /// What it is working on and where to — for "Show in Finder" on its bar.
+    var sources: [URL] = []
+    var target: URL?
 
     private(set) var progress = FileOpProgress()
     /// True while one of this job's questions is on screen or waiting its turn.

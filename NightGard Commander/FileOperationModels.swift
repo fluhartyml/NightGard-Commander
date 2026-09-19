@@ -238,6 +238,11 @@ nonisolated struct FileOpSummary: Sendable {
     var logURL: URL?
     var canUndo = false
     var wasUndo = false
+    /// What was copied or moved, and where to — shown on the summary. His question on
+    /// 2026-09-18, with three jobs running: "its done moving but what folder to what folder
+    /// was moved?" The popup said "15 items moved" and nothing else.
+    var sources: [String] = []
+    var target: String?
 }
 
 /// One line of the operation log. Written to disk so a whole Move can be undone later —

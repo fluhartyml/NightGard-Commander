@@ -548,6 +548,21 @@ private struct SummaryView: View {
             Text(title).font(.title2).bold()
             Text(headline).font(.title3)
                 .fixedSize(horizontal: false, vertical: true)  // it was cut off at "was lef…" (2026-09-18)
+            if !summary.wasUndo, !summary.sources.isEmpty, let target = summary.target {
+                Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 10, verticalSpacing: 4) {
+                    GridRow {
+                        Text("From").foregroundStyle(.secondary)
+                        Text(fromText).textSelection(.enabled)
+                            .contextMenu { Button("Show in Finder") { FinderReveal.show(summary.sources) } }
+                    }
+                    GridRow {
+                        Text("To").foregroundStyle(.secondary)
+                        Text(Self.readable(target)).textSelection(.enabled)
+                            .contextMenu { Button("Show in Finder") { FinderReveal.open(folder: target) } }
+                    }
+                }
+                .fixedSize(horizontal: false, vertical: true)
+            }
             if summary.skipped.isEmpty && summary.failed.isEmpty && summary.notes.isEmpty {
                 Label("Nothing was skipped and nothing failed.", systemImage: "checkmark.circle.fill")
                     .foregroundStyle(.green)
@@ -572,6 +587,27 @@ private struct SummaryView: View {
                     .controlSize(.large)
             }
         }
+    }
+
+    /// One item: its own path. Several: the folder they came from and their names.
+    private var fromText: String {
+        let paths = summary.sources
+        if paths.count == 1 { return Self.readable(paths[0]) }
+        let parents = Set(paths.map { ($0 as NSString).deletingLastPathComponent })
+        let names = paths.map { ($0 as NSString).lastPathComponent }
+        let shown = names.prefix(3).joined(separator: ", ") + (names.count > 3 ? ", …" : "")
+        if parents.count == 1, let parent = parents.first {
+            return "\(Self.readable(parent)) — \(names.count) items: \(shown)"
+        }
+        return "\(names.count) items: \(shown)"
+    }
+
+    /// "Raid_4x4 › Users › michaelfluharty › Wallpapers" — the drive first, the way Finder's
+    /// path bar reads, so two folders with the same name on different drives are not confused.
+    static func readable(_ path: String) -> String {
+        var parts = path.split(separator: "/").map(String.init)
+        if parts.first == "Volumes" { parts.removeFirst() } else { parts.insert("Macintosh HD", at: 0) }
+        return parts.joined(separator: " › ")
     }
 
     private var title: String {
@@ -604,6 +640,7 @@ private struct SummaryView: View {
                             controller.onReveal?(URL(fileURLWithPath: item.path).deletingLastPathComponent())
                         }
                     }
+                    .contextMenu { Button("Show in Finder") { FinderReveal.show([item.path]) } }
                 }
             }
         }
@@ -671,6 +708,17 @@ struct FileOperationProgressBar: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .background(Color.accentColor.opacity(0.08))
+        .contextMenu {
+            if !job.sources.isEmpty {
+                Button(job.sources.count == 1 ? "Show What Is Being \(job.kind == .move ? "Moved" : "Copied") in Finder"
+                                              : "Show the \(job.sources.count) Items Being \(job.kind == .move ? "Moved" : "Copied") in Finder") {
+                    FinderReveal.show(job.sources.map(\.path))
+                }
+            }
+            if let target = job.target {
+                Button("Show Where It Is Going in Finder") { FinderReveal.open(folder: target.path) }
+            }
+        }
     }
 
     private func line(_ p: FileOpProgress) -> String {

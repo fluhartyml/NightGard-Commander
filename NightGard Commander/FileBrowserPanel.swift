@@ -421,6 +421,10 @@ struct FileBrowserPanel: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .contentShape(Rectangle())
                 .contextMenu {
+                    Button("Show This Folder in Finder") {
+                        FinderReveal.open(folder: fileSystem.currentPath)
+                    }
+                    Divider()
                     Button("New Folder") {
                         startCreatingFolder()
                     }
@@ -577,6 +581,9 @@ struct FileBrowserPanel: View {
                                     onItemDoubleClick(firstItem)
                                 }
                             }
+                            Button("Show \(selectedItems.count) Items in Finder") {
+                                FinderReveal.show(fileSystem.files.filter { selectedItems.contains($0.id) }.map(\.path))
+                            }
                             Divider()
                             Button("Copy \(selectedItems.count) Items to Other Pane") {
                                 copySelectedToOtherPane()
@@ -607,6 +614,9 @@ struct FileBrowserPanel: View {
                             }
                         } else if let itemID = selectedItems.first,
                                   let item = fileSystem.files.first(where: { $0.id == itemID }) {
+                            Button("Show in Finder") {
+                                FinderReveal.show([item.path])
+                            }
                             Button("Rename") {
                                 startRenaming(item: item)
                             }
@@ -653,6 +663,10 @@ struct FileBrowserPanel: View {
                                 }
                             }
                         } else {
+                            Button("Show This Folder in Finder") {
+                                FinderReveal.open(folder: fileSystem.currentPath)
+                            }
+                            Divider()
                             Button("New Folder") {
                                 startCreatingFolder()
                             }

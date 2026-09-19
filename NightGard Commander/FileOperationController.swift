@@ -83,7 +83,7 @@ final class FileOperationController {
         let job = FileOperationJob(kind: kind, mode: mode, isUndo: false, footprint: footprint)
         let engine = FileOperationEngine(kind: kind, sources: sources, targetDir: target,
                                          control: job.control, delegate: job, mode: mode)
-        begin(job, onFinish: onFinish) { await engine.run() }
+        begin(job, sources: sources, target: target, onFinish: onFinish) { await engine.run() }
     }
 
     /// Extract from a Photos library (7.6): asks Copy or Move and the file type first.
@@ -117,7 +117,7 @@ final class FileOperationController {
         }
         let job = FileOperationJob(kind: .move, mode: .standard, isUndo: true, footprint: [URL(fileURLWithPath: "/")])
         let engine = FileOperationEngine(undoing: log, control: job.control, delegate: job)
-        begin(job, onFinish: nil) { await engine.run() }
+        begin(job, sources: [], target: nil, onFinish: nil) { await engine.run() }
     }
 
     /// Menu: Undo Last Move… — finds the newest Move that has not been undone and asks first.
@@ -140,14 +140,21 @@ final class FileOperationController {
         if go { undo(log) }
     }
 
-    private func begin(_ job: FileOperationJob, onFinish: ((FileOpSummary) -> Void)?,
+    private func begin(_ job: FileOperationJob, sources: [URL], target: URL?,
+                       onFinish: ((FileOpSummary) -> Void)?,
                        work: @escaping @Sendable () async -> FileOpSummary) {
         job.owner = self
         job.onFinish = onFinish
+        job.sources = sources
+        job.target = target
         jobs.append(job)
         Task { [weak self] in
-            let summary = await work()
+            var summary = await work()
             guard let self else { return }
+            if summary.sources.isEmpty, let target {
+                summary.sources = sources.map(\.path)
+                summary.target = target.path
+            }
             self.withdrawQuestions(of: job)
             self.jobs.removeAll { $0 === job }
             self.onDiskChanged?()

@@ -775,7 +775,9 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
             }
             while true {
                 do {
+                    let opStarted = Date(), pausedBefore = pausedSeconds
                     try await perform(op)
+                    noteFileTime(op, seconds: Date().timeIntervalSince(opStarted) - (pausedSeconds - pausedBefore))
                     break
                 } catch is FileOpCancelled {
                     throw FileOpCancelled()
@@ -1176,7 +1178,6 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
 
         while true {
             try await gate()
-            let started = Date()
             let n = read(input, buffer, Self.chunk)
             if n < 0 { if errno == EINTR { continue }; throw posixError("Could not read", src) }
             if n == 0 { break }
@@ -1187,7 +1188,6 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
                 if w < 0 { if errno == EINTR { continue }; throw posixError("Could not write to the target", dst) }
                 written += w
             }
-            noteDataTime(n, since: started)
             addBytes(Int64(n))
             await report()
         }
@@ -1207,12 +1207,10 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
         defer { buffer.deallocate() }
         while true {
             try await gate()
-            let started = Date()
             let n = read(fd, buffer, Self.chunk)
             if n < 0 { if errno == EINTR { continue }; throw posixError("Could not read back the copy", url) }
             if n == 0 { break }
             hasher.update(bufferPointer: UnsafeRawBufferPointer(start: buffer, count: n))
-            noteDataTime(n, since: started)
             addBytes(Int64(n))
             await report()
         }
@@ -1261,6 +1259,7 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
                 try? await Task.sleep(for: .milliseconds(200))
             }
             runningSince = runningSince.map { $0.addingTimeInterval(Date().timeIntervalSince(pausedAt)) }
+            pausedSeconds += Date().timeIntervalSince(pausedAt)
             progress.isPaused = false
             await report(force: true)
         }
@@ -1295,14 +1294,44 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
     // about two. Now only LARGE reads (≥ 1 MiB) teach the data rate; small files' time is
     // per-file overhead, which is what it is. Until a large read has been timed there is no
     // honest data rate, so the estimate is withheld ("estimating time left…").
+    //
+    // ⚠️ THIRD FAULT, 2026-09-18 (build 63 → 64). His screen: "about 4d 11h 25m left" on a
+    // 10.79 GB move running at 6.5 MB/s — about 45 minutes. Only the READS were timed as data;
+    // everything else in a big file — the flush to the drive, the read-back's open, the delete
+    // — was charged as per-file overhead. The first 24 files of that library were multi-GB
+    // Spotlight indexes, so "overhead" came out at minutes a file × 46,018 files = days.
+    // Now each FILE is timed whole, pauses taken out: a large file's whole time teaches the
+    // data rate, a small file's whole time teaches the per-file cost. Folder work and time
+    // spent waiting on a question are in neither.
     private var dataSeconds: Double = 0
     private var dataBytes: Int64 = 0
+    private var smallSeconds: Double = 0
+    private var smallFiles = 0
+    private var pausedSeconds: Double = 0
     private static let largeRead = 1 << 20
 
-    private func noteDataTime(_ n: Int, since started: Date) {
-        guard n >= Self.largeRead else { return }
-        dataSeconds += Date().timeIntervalSince(started)
-        dataBytes += Int64(n)
+    private func noteFileTime(_ op: Op, seconds: Double) {
+        let size: Int64, counted: Int64
+        switch op {
+        case let .transfer(src, _, move, _, s):
+            size = s
+            counted = (move && sameVolume(src)) ? 0 : (move ? s * 2 : s)
+        case let .extract(_, _, move, format, _, s):
+            size = s
+            counted = (move && format == .original) ? s * 2 : s
+        case .renameMove:
+            size = 0; counted = 0
+        default:
+            return
+        }
+        let t = max(0, seconds)
+        if size >= Int64(Self.largeRead) && counted > 0 {
+            dataSeconds += t
+            dataBytes += counted
+        } else {
+            smallSeconds += t
+            smallFiles += 1
+        }
     }
 
     private func estimate() -> Double? {
@@ -1311,11 +1340,17 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
         guard elapsed > 5, progress.filesDone >= 10 else { return nil }
         let filesLeft = Double(max(0, progress.filesTotal - progress.filesDone))
         let bytesLeft = Double(max(0, progress.bytesTotal - progress.bytesDone))
-        let perFile = max(0, elapsed - dataSeconds) / Double(progress.filesDone)
+        // A large file's own overhead is already inside the data rate; charging it again per
+        // file overstates a little, never by days. An Undo is renames only and is not timed
+        // file by file, so it keeps the plain wall-clock rate.
+        let perFile: Double
+        if smallFiles > 0 { perFile = smallSeconds / Double(smallFiles) }
+        else if dataBytes == 0 { perFile = elapsed / Double(progress.filesDone) }
+        else { perFile = 0 }
         var seconds = perFile * filesLeft
         if bytesLeft > Double(Self.largeRead) * Double(max(1, Int(filesLeft))) {
-            // Real data still to come — needs a measured rate from large reads.
-            guard dataSeconds > 0.2 else { return nil }
+            // Real data still to come — needs a rate measured on whole large files.
+            guard dataSeconds > 0.2, dataBytes > 0 else { return nil }
             seconds += bytesLeft / (Double(dataBytes) / dataSeconds)
         }
         return seconds

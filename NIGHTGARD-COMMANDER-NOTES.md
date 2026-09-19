@@ -313,3 +313,33 @@ more folders between using the same two panes without leaving them on the same t
 - Tests (scratch harness driving the real controller): parallel jobs with a question each answered to the
   right job, overlap refusals, cancel-in-line, refresh ID-keeping and step-up — ALL PASSED on the Mac
   drive, Raid_4x4 and Cold Storage (SMB). ⚠️ The new bars were NOT looked at on screen yet.
+
+## ✅ BUILT 2026-09-18 ~21:3x — build 64: From/To, time left (third fault), Show in Finder
+- **Summary says what moved and where:** his question with three jobs running — *"its done moving but
+  what folder to what folder was moved?"* The popup now has **From** / **To** lines, drive first
+  ("Raid_4x4 › Users › …"), so same-named folders on two drives cannot be confused.
+- **Time left, third fault:** build 63 said *"about 4d 11h 25m"* on a 10.79 GB move at 6.5 MB/s (~45 min).
+  Only READS were timed as data; a big file's flush, read-back open and delete were charged as per-file
+  overhead, and the library's first files were multi-GB Spotlight indexes. Now each file is timed WHOLE
+  (pauses removed): large files teach the data rate, small files the per-file cost; Undo keeps wall-clock.
+  ⚠️ Verified only on local drives (engine suite ALL PASSED Mac→Raid, new test 28 big-then-tiny). The
+  network run was STOPPED at his "i think i may be pushing the limits on my mac" — four jobs were sharing
+  the link. **Rerun test 28 against Cold Storage when the link is quiet** (old engine vs new).
+- **Show in Finder on every right-click** — his words: *"i also want a show in finder right click for
+  everything"*: file rows (one or many), a pane's empty space (the folder itself), empty-folder view,
+  playlist rows, each progress bar (source / destination), the summary's From, To and item rows.
+  A path a Move already took is shown by its nearest folder that still exists (`FinderReveal`).
+
+## ⬜ PLANNED / ASKED — his, 2026-09-18 21:1x–21:3x. NOT BUILT.
+1. **Lock the folders a job is using** — *"i want a folder that if i am moving or copying to temporarily
+   lock so i dont accidentally delete it while manipulating files in the folder or sub folder"*.
+   Plan: while a job runs, Commander refuses Delete / Rename / Move of anything overlapping its footprint
+   (the folder, anything above it, and what it is writing), with a plain sentence; other files inside stay
+   free. ⚠️ Commander cannot stop Finder — say so. (Finder's own lock flag would block the job's writes.)
+2. **Delete goes nowhere recoverable** — he asked *"can it delete to the trashcan? im just curious not
+   directing"*. Answer given: NO — `FileSystemService.deleteItem` is `removeItem`, immediate, and no
+   confirm was found. Cold Storage (SMB) has no Trash regardless. **Not directed; ask before changing.**
+3. **A governor** — *"is there a govoner or regulator to keep the mac stable?"* None exists; four jobs ran
+   at once. Offered: at most 2 running, the rest wait in line, each with an X (his queue condition).
+4. **Resizable panes** — *"can these panes be resized?"* No: fixed halves, and four bars took the bottom
+   half of the window. Offered: a draggable divider and bars that fold to one line.
