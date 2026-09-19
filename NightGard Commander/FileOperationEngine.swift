@@ -935,7 +935,19 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
 
     /// Each scanned file into its subfolder; each Photos library through Extract, copied.
     /// Clashes are asked the Flatten way — Skip or Keep Both, never Replace.
-    private func planMedia(_ sources: [URL], plan: MediaPlan) async throws {
+    private func planMedia(_ sources: [URL], plan givenPlan: MediaPlan) async throws {
+        var plan = givenPlan
+        // Build 87: finish each video's shelf by reading it — Video/1080p/H.264/. Done before
+        // any folder is made, so only folders that will hold something are created.
+        let toProbe = sources.filter { plan.probe.contains($0.path) }
+        for (i, src) in toProbe.enumerated() {
+            try checkCancelled()
+            progress.currentName = "Reading video details — \((i + 1).formatted()) of \(toProbe.count.formatted())"
+            await report()
+            let sub = await VideoProbe.shelf(for: src)
+            let base = plan.folders[src.path] ?? ""
+            plan.folders[src.path] = base.isEmpty ? sub : base + "/" + sub
+        }
         // The subfolders first, so every file has somewhere to land.
         var badFolders = Set<String>()
         for rel in Set(plan.folders.values).union(plan.libraries.values) where !rel.isEmpty {

@@ -605,3 +605,16 @@ media? it is media"* · *"add them all and all video codexes"*.
 - Codecs live inside containers; the scanner goes by container, so every codec inside these is covered.
 - ⛔ Left out on purpose: **.ts / .tp** (also TypeScript/source code — a whole-drive scan would move code into
   Video/) and **.ifo** (DVD index). Tested: .m4p/.m4b/.opus/.webm/.mts/.mkv/.flac found; .ts/.IFO/.txt not.
+
+## Build 87 — Video/ then Resolution then Codec (2026-09-19)
+His: *"if possible i think sub folders of resolution 780 1080 4K etc and within those resolutions pidgeon hole
+codexes"* · *"yes please"*. A fifth Organization choice, Video scans only: **Video/1080p/H.264/**, Video/4K/HEVC/…
+- `VideoProbe.swift` reads the first picture track: size and codec (four-character code → H.264, HEVC,
+  ProRes, AV1, VP9, MPEG-4, MPEG-2, Motion JPEG, DV, WMV…; an unfamiliar one keeps its code as its folder).
+- Resolution by the LONG side (SD ≤1024, 720p ≤1280, 1080p ≤1920, 1440p ≤2560, 4K ≤4096, 8K above) — a
+  1920×800 widescreen film is 1080p, an upright 1080×1920 phone clip is 1080p.
+- Unreadable files (some .mkv/.webm, damaged files) → **Video/Unknown/** — never guessed.
+- The engine reads every video before making any folder, so only folders that will hold something exist.
+- Tested: 15 real videos on the Raid read correctly (read-only); an engine sort of copies built exactly
+  Video/1080p/H.264, Video/SD/H.264, Video/Unknown. Earlier suites ALL PASSED.
+His plan: *"we are going to sort one media type at a time, i think first we will try photos then video"*.

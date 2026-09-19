@@ -77,7 +77,12 @@ nonisolated struct MediaPlan: Sendable, Equatable {
     var libraries: [String: String] = [:]
 
     /// The four shelvings Scan for Media offers.
-    enum Sorting: Sendable { case flatten, byExtension, byType, byTypeThenExtension }
+    enum Sorting: Sendable { case flatten, byExtension, byType, byTypeThenExtension,
+        /// Build 87: Video/<resolution>/<codec>/ — read from each file by the engine.
+        byResolutionCodec }
+    /// Build 87: videos whose shelf is finished by reading the file (resolution and codec).
+    /// Their `folders` entry holds the base ("Video"); the engine adds "/1080p/H.264".
+    var probe: Set<String> = []
 
     /// Where everything goes. One place, used by the dialog AND the tests.
     ///
@@ -95,6 +100,7 @@ nonisolated struct MediaPlan: Sendable, Equatable {
             case .byExtension: return ext
             case .byType: return type.rawValue
             case .byTypeThenExtension: return "\(type.rawValue)/\(ext)"
+            case .byResolutionCodec: return type.rawValue
             }
         }
         func join(_ a: String, _ b: String) -> String {
@@ -108,7 +114,7 @@ nonisolated struct MediaPlan: Sendable, Equatable {
         let photoShelf: String
         switch sorting {
         case .flatten, .byExtension: photoShelf = ""
-        case .byType, .byTypeThenExtension: photoShelf = MediaScanner.MediaType.photo.rawValue
+        case .byType, .byTypeThenExtension, .byResolutionCodec: photoShelf = MediaScanner.MediaType.photo.rawValue
         }
         for url in files {
             let path = url.standardizedFileURL.path
@@ -121,6 +127,7 @@ nonisolated struct MediaPlan: Sendable, Equatable {
                 plan.folders[path] = photoShelf
             } else {
                 plan.folders[path] = shelf(type, url.pathExtension.uppercased())
+                if sorting == .byResolutionCodec && type == .video { plan.probe.insert(path) }
             }
         }
         // Build 83: a library's photos go flat into the same Photos folder — no folder per

@@ -107,6 +107,9 @@ struct ScanForMediaDialog: View {
         case byMediaType = "Folders by Media Type (Audio/, Video/, Photos/)"
         // His ask, 2026-09-11: media type first, then extension inside it.
         case byMediaTypeThenExtension = "Folders by Media Type then Extension (Audio/MP3/, Video/MP4/, Photos/<folder>/)"
+        // Build 87, his: "sub folders of resolution 780 1080 4K etc and within those
+        // resolutions pidgeon hole codexes". Video scans only.
+        case byResolutionThenCodec = "Video/ then Resolution then Codec (Video/1080p/H.264/)"
     }
 
     var body: some View {
@@ -395,7 +398,7 @@ struct ScanForMediaDialog: View {
                             .foregroundColor(.secondary)
                     } else {
                         Picker("Organization", selection: $selectedOrganization) {
-                            ForEach(Organization.allCases, id: \.self) { org in
+                            ForEach(Organization.allCases.filter { $0 != .byResolutionThenCodec || selectedType == .video }, id: \.self) { org in
                                 Text(organizationLabel(org)).tag(org)
                             }
                         }
@@ -619,6 +622,7 @@ struct ScanForMediaDialog: View {
         case .byExtension: return "Folders by Extension (\(ext))"
         case .byMediaType: return "One \(t)/ folder"
         case .byMediaTypeThenExtension: return "\(t)/ then Extension (\(t)/\(ext))"
+        case .byResolutionThenCodec: return "Video/ then Resolution then Codec (Video/1080p/H.264/, Video/4K/HEVC/…)"
         }
     }
 
@@ -633,6 +637,7 @@ struct ScanForMediaDialog: View {
         case .byExtension: sorting = .byExtension
         case .byMediaType: sorting = .byType
         case .byMediaTypeThenExtension: sorting = .byTypeThenExtension
+        case .byResolutionThenCodec: sorting = selectedType == .video ? .byResolutionCodec : .byType
         }
         return MediaPlan.build(files: files, libraries: libraries, sorting: sorting)
     }
