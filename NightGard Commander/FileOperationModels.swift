@@ -59,8 +59,12 @@ nonisolated enum FileOpMode: Sendable, Equatable {
 /// What Scan for Media hands the engine. Paths are compared as strings, so every one is
 /// a standardized file path.
 ///
-/// ⛔ PHOTOS ARE COPIED, NEVER MOVED — his rule, 2026-09-19: "photos copied not moved".
-/// `copyOnly` holds every photo, whatever action was chosen.
+/// ⛔ PHOTOS INSIDE A PHOTOS LIBRARY ARE COPIED, NEVER MOVED — his rule, 2026-09-19: "photos
+/// copied not moved" · "it should tell the user photos were copied not moved because they were
+/// in {photolibrary name and filepath}". ⚠️ Build 68 stretched it to EVERY photo; he corrected it
+/// in build 84: "the copy rule for photos was supposed to be for photos that are in a photos
+/// library only". Loose photos follow Move / Copy like audio and video. `copyOnly` stays for a
+/// future case; the library rule itself lives in Extract (`forceCopy`).
 /// ⭐ A PHOTOS LIBRARY COMES OUT THROUGH ITS OWN DATABASE — his rule, same morning: "the
 /// photos should be copied using the enclosing photolibrarys database to reinstate name
 /// and metadata". So a library is not walked file by file; it is Extracted.
@@ -110,7 +114,6 @@ nonisolated struct MediaPlan: Sendable, Equatable {
             let path = url.standardizedFileURL.path
             let type = MediaScanner.mediaType(for: url)
             if type == .photo {
-                plan.copyOnly.insert(path)
                 // ⭐ BUILD 83 — PHOTOS GO FLAT. His words, 2026-09-19: "the photos are creating
                 // sub folders with uuid names and they need to be flat but the videis and other
                 // media folders need sub folders". This replaces build 69's "keep the folder"

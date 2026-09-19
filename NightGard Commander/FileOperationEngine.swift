@@ -612,7 +612,8 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
             let onMove = kind == .move && bothFiles
             // Build 81: Merge is SHOWN for every pair of files — "i want to see merge, full stop" —
             // and USABLE only when they are identical. Merging two different files would throw
-            // one away. A photo's source never leaves (it is always copied), which the popup says.
+            // one away. A source that cannot leave (a library's photo, a guarded folder) stays,
+            // which the popup says.
             let mergeOK = bothFiles && identical
             let replaceOK = onMove && !identical
             let keepOtherOK = onMove && !identical && srcMoves
@@ -658,7 +659,7 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
                     ops.append(.retire(src: src, landedAt: dst, identical: true, owner: owner))
                 } else {
                     skip(src, kind == .move
-                         ? "Merged: identical to the “\(name)” arriving there. This one stays in the source — photos are always copied, never moved."
+                         ? "Merged: identical to the “\(name)” arriving there. This one stays where it is — photos inside a Photos library are always copied, never moved."
                          : "Merged: identical to the “\(name)” arriving there, so it was not copied twice.")
                 }
                 return nil
@@ -992,7 +993,7 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
         }
         if kind == .move && photosCopied > 0 {
             summary.notes.append(.init(path: targetDir.path,
-                reason: "\(countText(photosCopied, "photo")) copied, not moved — photos are always copied."))
+                reason: "\(countText(photosCopied, "photo")) copied, not moved."))
         }
     }
 

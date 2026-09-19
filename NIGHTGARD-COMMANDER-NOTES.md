@@ -574,3 +574,13 @@ videos or videos/mp4 .../mov .../vid(etc)"*.
 - Tests: media suite updated to the flat rule + a Photos-only run making only Photos/ — ALL PASSED on Mac
   drive + Raid; build-76 and build-77 suites ALL PASSED.
 ⬜ Still his to answer: the 5,440 empty folders left under Media/Photos on Cold Storage by earlier runs.
+
+## Build 84 — the copy rule is for library photos only (2026-09-19)
+His correction: *"now the copy rule for photos was supposed to be for photos that are in a photos library
+only"*. ⛔ **Claude's error:** build 68 recorded "Loose photos are always copied" — his three sentences were all
+about photos INSIDE a library (*"…because they were in {photolibrary name and filepath}"*). Fixed: photos in
+a Photos library (a `.photoslibrary` package, or a backup of one that lost the extension — spotted by its
+database) are extracted and always copied; **loose photos follow Move / Copy like audio and video.**
+Tested with his scenario — a tree inside the media folder scanned and moved to the media folder: audio lands
+in Audio/MP3/, the loose photo MOVES to Photos/ (83 left a copy behind). Only empty folders remain
+(Old Rips/Album A/Disc 2) — removing them is offered to him, not built. All suites ALL PASSED.

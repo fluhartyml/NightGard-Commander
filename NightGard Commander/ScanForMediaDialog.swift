@@ -243,7 +243,7 @@ struct ScanForMediaDialog: View {
                 .padding(.leading, 4)
             }
             if selectedType == .photo {
-                Text("Photos are always copied, even when the action is Move, and go flat into Photos/ — no subfolders.")
+                Text("Photos inside a Photos library are always copied. Loose photos follow Move or Copy. All go flat into Photos/ — no subfolders.")
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .padding(.leading, 4)

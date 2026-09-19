@@ -385,7 +385,7 @@ private struct FileQuestionView: View {
             return "One copy lands in the target. Nothing is deleted — this is a copy."
         }
         if question.sourceStays {
-            return "One copy lands in the target. Nothing is deleted: photos are always copied, never moved, so both stay where they are."
+            return "One copy lands in the target. Nothing is deleted: this one stays where it is — photos inside a Photos library are always copied, never moved."
         }
         return question.targetIsIncoming
             ? "One copy lands in the target. BOTH sources are deleted — from “\(here)” and from “\(there)” — only after the copy in the target is checked byte for byte. Finder tags from both are kept."
