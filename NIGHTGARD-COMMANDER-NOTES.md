@@ -441,3 +441,8 @@ anything"*. It moved a pane to the item's parent folder — usually the folder t
 nothing visibly happened. Asked what he'd suggest, Claude recommended Finder; he said *"yes build 73"*.
 Now: **Show in Finder** opens Finder with the item selected (its folder, if the item is gone).
 `controller.onReveal` is no longer used by the popup; left in place.
+
+## ⛔ "No Sort" is the default ON PURPOSE — do not change it (2026-09-19)
+His words: *"no we did the no sort on purpose for "dj mode""*. A pane lists items in the order the drive
+returns them (a network drive: roughly creation order). Claude proposed making Name the default; declined.
+Name order is one click away in each pane's sort menu (≡).
