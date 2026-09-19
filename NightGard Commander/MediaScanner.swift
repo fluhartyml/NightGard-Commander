@@ -182,7 +182,7 @@ class MediaScanner {
         return formatter.string(fromByteCount: bytes)
     }
 
-    enum MediaType: String {
+    nonisolated enum MediaType: String {
         case audio = "Audio"
         case video = "Video"
         case photo = "Photos"

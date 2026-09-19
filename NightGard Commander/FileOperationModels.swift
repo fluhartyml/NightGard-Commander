@@ -62,6 +62,59 @@ nonisolated struct MediaPlan: Sendable, Equatable {
     var copyOnly: Set<String> = []
     /// Photos library path → subfolder of the target its photos are extracted into.
     var libraries: [String: String] = [:]
+
+    /// The four shelvings Scan for Media offers.
+    enum Sorting: Sendable { case flatten, byExtension, byType, byTypeThenExtension }
+
+    /// Where everything goes. One place, used by the dialog AND the tests.
+    ///
+    /// ⭐ PHOTOS KEEP THEIR FOLDER — his rule, 2026-09-19: "if the photos are loose the
+    /// containing folder should be copied too ( that would mean the [name] of the
+    /// photolibrary in folder form and not the actual photolibrary". So a loose photo
+    /// lands inside a folder named like the one it came from, and a library's photos land
+    /// in a PLAIN folder named after the library ("2025 09 11", not a .photoslibrary).
+    /// Audio and video are shelved as before.
+    static func build(files: [URL], libraries: [URL], sorting: Sorting) -> MediaPlan {
+        var plan = MediaPlan()
+        func shelf(_ type: MediaScanner.MediaType, _ ext: String) -> String {
+            switch sorting {
+            case .flatten: return ""
+            case .byExtension: return ext
+            case .byType: return type.rawValue
+            case .byTypeThenExtension: return "\(type.rawValue)/\(ext)"
+            }
+        }
+        func join(_ a: String, _ b: String) -> String {
+            a.isEmpty ? b : (b.isEmpty ? a : a + "/" + b)
+        }
+        // Photos are shelved by FOLDER, never by extension — his reason, 2026-09-19:
+        // "there are usually so many photos vs other media types and they usually have
+        // obscure names" — the folder is what tells them apart. A library's folder
+        // also mixes JPG, HEIC and Live Photo videos; an extension layer would scatter it,
+        // and loose photos follow the same rule so the two never disagree.
+        let photoShelf: String
+        switch sorting {
+        case .flatten, .byExtension: photoShelf = ""
+        case .byType, .byTypeThenExtension: photoShelf = MediaScanner.MediaType.photo.rawValue
+        }
+        for url in files {
+            let path = url.standardizedFileURL.path
+            let type = MediaScanner.mediaType(for: url)
+            if type == .photo {
+                plan.copyOnly.insert(path)
+                let parent = url.deletingLastPathComponent().standardizedFileURL
+                plan.folders[path] = parent.path == "/" ? photoShelf : join(photoShelf, parent.lastPathComponent)
+            } else {
+                plan.folders[path] = shelf(type, url.pathExtension.uppercased())
+            }
+        }
+        for lib in libraries {
+            let name = lib.pathExtension.lowercased() == "photoslibrary"
+                ? lib.deletingPathExtension().lastPathComponent : lib.lastPathComponent
+            plan.libraries[lib.standardizedFileURL.path] = join(photoShelf, name)
+        }
+        return plan
+    }
 }
 
 /// 7.9 — his ask: "i would choose jpg but maybe a printshop uses png or another format".

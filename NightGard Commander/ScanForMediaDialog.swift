@@ -94,11 +94,11 @@ struct ScanForMediaDialog: View {
     }
 
     enum Organization: String, CaseIterable {
-        case flatten = "Flatten (all in one folder)"
-        case byExtension = "Folders by Extension (MP3/, M4A/, MP4/...)"
+        case flatten = "Flatten (all in one folder — photos keep their folder)"
+        case byExtension = "Folders by Extension (MP3/, M4A/, MP4/... — photos keep their folder)"
         case byMediaType = "Folders by Media Type (Audio/, Video/, Photos/)"
         // His ask, 2026-09-11: media type first, then extension inside it.
-        case byMediaTypeThenExtension = "Folders by Media Type then Extension (Audio/MP3/, Photos/JPG/...)"
+        case byMediaTypeThenExtension = "Folders by Media Type then Extension (Audio/MP3/, Video/MP4/, Photos/<folder>/)"
     }
 
     var body: some View {
@@ -215,7 +215,7 @@ struct ScanForMediaDialog: View {
             // moved". Said here, before Execute, not only in the summary afterwards.
             if !scanner.foundLibraries.isEmpty {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("and \(scanner.foundLibraries.count) Photos \(scanner.foundLibraries.count == 1 ? "library" : "libraries") — their photos come out under their real names and dates, read from each library's own database, and are copied, never moved:")
+                    Text("and \(scanner.foundLibraries.count) Photos \(scanner.foundLibraries.count == 1 ? "library" : "libraries") — their photos come out under their real names and dates, read from each library's own database, into a plain folder named after the library, and are copied, never moved:")
                         .font(.caption)
                     ForEach(scanner.foundLibraries, id: \.self) { lib in
                         Text("• \(lib.lastPathComponent)  —  \(lib.deletingLastPathComponent().path)")
@@ -228,7 +228,7 @@ struct ScanForMediaDialog: View {
                 .padding(.leading, 4)
             }
             if scanner.foundFiles.contains(where: { scanner.getMediaType(for: $0) == .photo }) {
-                Text("Photos are always copied, even when the action is Move.")
+                Text("Photos are always copied, even when the action is Move, and keep the folder they were in.")
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .padding(.leading, 4)
@@ -554,28 +554,16 @@ struct ScanForMediaDialog: View {
         }
     }
 
-    /// Where each scanned file goes, under the chosen organization. Photos libraries land
-    /// in the Photos shelf when there is one; every photo is marked copy-only.
+    /// Where each scanned file goes — the rules live in `MediaPlan.build`, shared with the tests.
     private func mediaPlan() -> MediaPlan {
-        var plan = MediaPlan()
-        for url in scanner.foundFiles {
-            let path = url.standardizedFileURL.path
-            let type = scanner.getMediaType(for: url)
-            let ext = url.pathExtension.uppercased()
-            switch selectedOrganization {
-            case .flatten: plan.folders[path] = ""
-            case .byExtension: plan.folders[path] = ext
-            case .byMediaType: plan.folders[path] = type.rawValue
-            case .byMediaTypeThenExtension: plan.folders[path] = "\(type.rawValue)/\(ext)"
-            }
-            if type == .photo { plan.copyOnly.insert(path) }
+        let sorting: MediaPlan.Sorting
+        switch selectedOrganization {
+        case .flatten: sorting = .flatten
+        case .byExtension: sorting = .byExtension
+        case .byMediaType: sorting = .byType
+        case .byMediaTypeThenExtension: sorting = .byTypeThenExtension
         }
-        for lib in scanner.foundLibraries {
-            let shelf = (selectedOrganization == .byMediaType || selectedOrganization == .byMediaTypeThenExtension)
-                ? MediaScanner.MediaType.photo.rawValue : ""
-            plan.libraries[lib.standardizedFileURL.path] = shelf
-        }
-        return plan
+        return MediaPlan.build(files: scanner.foundFiles, libraries: scanner.foundLibraries, sorting: sorting)
     }
 
     private func addToPlaylist() async {

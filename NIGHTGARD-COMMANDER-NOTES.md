@@ -397,3 +397,19 @@ copied not moved because they were in {photolibrary name and filepath}"*.
   ALL PASSED (73). ⚠️ **Run the harness with `NGC_OPLOG_DIR` set** — without it the tests write their
   move logs into the REAL Operations folder (happened once this morning; 144 test logs, 20 Raid Trash
   items and 96 test lines in "Verified copies.tsv" were found and removed; his 9 real logs untouched).
+
+## Build 69 — photos keep their folder (2026-09-19)
+
+**His rule:** *"if the photos are loose the containing folder should be copied too ( that would mean the
+[name] of the photolibrary in folder form and not the actual photolibrary"*. **His reason:** *"there are
+usually so many photos vs other media types and they usually have obscure names"*.
+
+- A loose photo lands in `Photos/<the folder it was in>/` — e.g. `…/Vacation 2019/c.jpg` → `Photos/Vacation 2019/c.jpg`.
+- A library's photos land in a PLAIN folder named after it: `2025 09 11.photoslibrary` → `Photos/2025 09 11/`.
+- **Photos never get an extension layer** (Claude's call, flagged to him): a library folder mixes JPG, HEIC
+  and Live Photo videos, and an extension shelf would scatter it; loose photos follow the same rule so the
+  two never disagree. Audio and video keep Audio/MP3, Video/MP4. With Flatten or By Extension there is no
+  Photos/ shelf — the photo folders sit at the top.
+- Rules live in `MediaPlan.build`, shared by the dialog and the test. Media suite ALL PASSED on Mac/Raid/Cold Storage.
+- ⚠️ Known edge: rescanning a destination that already holds extracted libraries would re-shelve each
+  Live Photo's .mov as a video. Not fixed; only matters if the result folder itself is scanned again.
