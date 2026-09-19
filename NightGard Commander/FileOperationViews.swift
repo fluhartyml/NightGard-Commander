@@ -15,6 +15,8 @@
 //
 
 import SwiftUI
+import AVFoundation
+import UniformTypeIdentifiers
 
 // MARK: - Router
 
@@ -112,6 +114,11 @@ private struct SideBySide: View {
                 Text(f.name).font(.headline).lineLimit(2)
             }
             Text("in “\(Fmt.folderName(f.url))”").font(.callout).foregroundStyle(.secondary)
+            // His ask, 2026-09-19: "you know what would be better than show in finder (keep
+            // show in finder) thumbnail preview?"
+            if !f.isDirectory || f.isPackage {
+                CardThumbnail(url: f.url)
+            }
             // His ask, 2026-09-19: "can it have show in finder so i can see each and play if
             // needed?" — Finder opens with this one selected; Space plays or previews it.
             Button("Show in Finder") { FinderReveal.show([f.url.path]) }
@@ -151,6 +158,37 @@ private struct SideBySide: View {
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
+    }
+}
+
+/// The picture on a clash card: a frame a few seconds into a video (the first frame is often
+/// black), otherwise Quick Look's preview. Nothing is shown if the file has no picture or has
+/// already moved away.
+private struct CardThumbnail: View {
+    let url: URL
+    @State private var image: NSImage?
+
+    var body: some View {
+        Group {
+            if let image {
+                Image(nsImage: image)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(maxWidth: .infinity, maxHeight: 150)
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+            }
+        }
+        .task(id: url) {
+            let isVideo = UTType(filenameExtension: url.pathExtension)?.conforms(to: .movie) ?? false
+            var picture: NSImage? = nil
+            if isVideo {
+                picture = await PanePreview.frameFewSecondsIn(AVURLAsset(url: url))
+            }
+            if picture == nil {
+                picture = await PanePreview.quickLook(url, size: CGSize(width: 320, height: 200))
+            }
+            image = picture
+        }
     }
 }
 

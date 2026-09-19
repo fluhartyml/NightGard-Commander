@@ -529,3 +529,9 @@ lands in the target. BOTH sources are deleted — from “A” and from “B” 
 is checked byte for byte." The "Do the same for every identical pair in this bar" box is always shown for
 Merge (78 hid it when the pre-count was 0). Merge is offered only when the source can leave (never for
 photos), so the sentence is always true.
+
+## Build 80 — a thumbnail on each clash card (2026-09-19)
+His ask: *"you know what would be better than show in finder (keep show in finder) thumbnail preview?"*
+Each card shows a picture: a frame a few seconds into a video (reusing `PanePreview.frameFewSecondsIn`),
+otherwise Quick Look's preview. Nothing shown when there is no picture or the file has already moved.
+Show in Finder stays. Display only.
