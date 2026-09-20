@@ -663,6 +663,7 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
                                             targetGoesToTrash: isLocalVolume(dst))
                 question.flattenOnly = true
                 question.targetIsIncoming = !inTarget
+                question.landingName = dst.lastPathComponent
                 question.mergeOffered = bothFiles
                 question.mergeEnabled = mergeOK
                 question.sourceStays = !srcMoves

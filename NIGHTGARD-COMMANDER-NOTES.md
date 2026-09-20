@@ -755,3 +755,28 @@ unreadable file is reported rather than counted as a duplicate.
 ⬜ **Still name-blind only for exact copies.** A re-saved or re-compressed photo is a different
 file, byte for byte, and is not a duplicate here. Comparing image data while ignoring EXIF — what
 build 88 does for MP3 tags — is the next step if he wants it.
+
+## Build 93 — real thumbnails on the cards, and the name they LAND under (2026-09-19)
+
+**Two things he caught on his own screen.**
+
+### 1. *"it doesnt show the actual pictures in the cards it shows an icon"*
+Build 80 added thumbnails through QuickLook. ⛔ **QuickLook answers for ANY file, and what it
+returns for one it cannot render is the document ICON** — so the card looked like it had a
+preview when it had nothing. Build 93 **decodes the image itself with ImageIO first**
+(measured 0.12 s on a 4 MB photo over the network) and falls back to QuickLook only after that.
+A video still comes from its own frame grab. **When nothing can be decoded, nothing is drawn** —
+never an icon pretending to be a preview.
+
+### 2. *"they look like different names"* / *"also incoming starts with an 8"*
+The header said *Two files named "5241CC02-….jpeg"* while the second card plainly read
+`83A15CE6-…`. **Both were true.** A photo extracted from a Photos library keeps its UUID name
+inside the library and is renamed on the way out to the original filename in the library's
+database — so two UUID-named sources clash under **one landing name**
+(`Resized_1000049546_36454042321716_1704211826514.jpeg`, in the case he was looking at).
+The header now names that landing name (`FileQuestion.landingName`), and the cards go on showing
+each file as it is stored. **Naming the pair after one card's UUID made a correct comparison look
+like a wrong one.**
+
+**Also:** the build-88 test that asserted "Merge shown but NOT enabled" was updated, not the code
+— build 91 made Merge live on every pair on purpose.

@@ -186,11 +186,35 @@ private struct CardThumbnail: View {
             if isVideo {
                 picture = await PanePreview.frameFewSecondsIn(AVURLAsset(url: url))
             }
+            // Build 93 — his: "it doesnt show the actual pictures in the cards it shows an
+            // icon". ⛔ QuickLook is not reliable here: it answers for ANY file, and what it
+            // hands back for one it cannot render is the document ICON, which is exactly what
+            // he was looking at. Decoding the image itself is both surer and cheaper
+            // (measured 0.12 s on a 4 MB photo over the network), so it goes first.
+            if picture == nil {
+                picture = await Self.decode(url)
+            }
             if picture == nil {
                 picture = await PanePreview.quickLook(url, size: CGSize(width: 320, height: 200))
             }
             image = picture
         }
+    }
+
+    /// The picture itself, downsampled by ImageIO. Nil for anything that is not an image it
+    /// can read — and then nothing is drawn, rather than an icon pretending to be a preview.
+    private nonisolated static func decode(_ url: URL) async -> NSImage? {
+        await Task.detached(priority: .userInitiated) {
+            guard let src = CGImageSourceCreateWithURL(url as CFURL, nil),
+                  CGImageSourceGetCount(src) > 0 else { return nil }
+            let options: [CFString: Any] = [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceThumbnailMaxPixelSize: 640
+            ]
+            guard let cg = CGImageSourceCreateThumbnailAtIndex(src, 0, options as CFDictionary) else { return nil }
+            return NSImage(cgImage: cg, size: NSSize(width: cg.width, height: cg.height))
+        }.value
     }
 }
 
@@ -349,7 +373,11 @@ private struct FileQuestionView: View {
     @ViewBuilder private var header: some View {
         if question.flattenOnly {
             Text(question.targetIsIncoming
-                 ? "Two files named “\(question.source.name)” are coming into the same folder"
+                 // Build 93 — his: "they look like different names". For photos coming out of
+                 // a Photos library the two sources keep their UUID names and are renamed on
+                 // the way out, so the name they CLASH on is the landing name, not either
+                 // card's. Naming the pair after one card's UUID made the popup look wrong.
+                 ? "Two files are coming into “\(Fmt.folderName(question.target.url))” as “\(question.landingName ?? question.source.name)”"
                  : "“\(question.source.name)” is already in “\(Fmt.folderName(question.target.url))”")
                 .font(.title2).bold()
             Text(flattenIntro)

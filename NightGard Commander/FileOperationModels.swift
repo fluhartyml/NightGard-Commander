@@ -364,6 +364,10 @@ nonisolated struct FileQuestion: Sendable {
     var mediaSort = false
     /// The other file is still in a source folder (not yet in the target).
     var otherGoesToTrash = true
+    /// Build 93: the name both files would land under, when it is not either file's own name
+    /// — a photo extracted from a Photos library is renamed to the original filename held in
+    /// the library's database, so two UUID-named sources can clash under one real name.
+    var landingName: String?
 
     /// Identical means every byte. Build 88's `.sameAudio` pair is NOT identical — the files
     /// differ, only their music does not — so it keeps Replace and Keep the Other One.
