@@ -524,10 +524,12 @@ struct ContentView: View {
                     Divider()
                 }
             }
-            if fileOps.isRunning {
-                FileOperationOverallBar(controller: fileOps)
-                Divider()
-            }
+            // Build 101 — his ask, 2026-09-20: "yes keep it visible and say idle".
+            // It used to vanish with the work, which meant the one line that says what
+            // Commander is doing was absent exactly when he looked to see IF it was doing
+            // anything. A feedback line that only exists during feedback is not a status bar.
+            FileOperationOverallBar(controller: fileOps)
+            Divider()
 
             // Command button bar (MC/NC style)
             HStack(spacing: 0) {
@@ -600,6 +602,18 @@ struct ContentView: View {
         .environment(fileOps)
         .sheet(item: $fileOps.presented, onDismiss: { fileOps.sheetDismissed() }) { presented in
             FileOperationSheet(presented: presented, controller: fileOps)
+        }
+        // Build 101 — a run's skipped files, opened in a pane on his word. It lands in the
+        // pane that is NOT focused, so the focused pane stays on the folder he is moving them
+        // TO: select in the listing, press Move, and they go across. That is the whole design
+        // and it needed no change to the move itself.
+        .onChange(of: fileOps.paneListingRequest) { _, request in
+            guard let request else { return }
+            let destination = focusedPane == .left ? rightFileSystem : leftFileSystem
+            destination.showVirtualListing(title: request.title,
+                                           paths: request.paths,
+                                           reasons: request.reasons)
+            fileOps.paneListingRequest = nil
         }
         .onAppear {
             fileOps.onDiskChanged = {

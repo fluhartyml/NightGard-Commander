@@ -23,6 +23,33 @@ import Observation
 @Observable
 final class FileOperationController {
 
+    // MARK: - Open a run's leftovers in a pane (build 101)
+
+    /// Set when he asks for a finished run's skipped or failed files in a Commander pane.
+    /// ContentView watches this, loads the listing into a pane and clears it.
+    ///
+    /// His design, 2026-09-20: *"open a list of them in commander … maybe it id a commander
+    /// pane where the user can move them wherer they want to."* The list is what he acts on —
+    /// select, Show in Finder, and Move straight into the other pane with the ordinary keys.
+    struct PaneListingRequest: Equatable {
+        let title: String
+        let paths: [String]
+        let reasons: [String: String]
+    }
+
+    /// Non-nil for exactly as long as it takes ContentView to pick it up.
+    var paneListingRequest: PaneListingRequest?
+
+    /// Hand a summary's skipped items to a pane. Failed items travel the same way.
+    func showInPane(_ items: [FileOpSummary.Item], titled title: String) {
+        guard !items.isEmpty else { return }
+        var reasons: [String: String] = [:]
+        for item in items { reasons[item.path] = item.reason }
+        paneListingRequest = PaneListingRequest(title: title,
+                                                paths: items.map(\.path),
+                                                reasons: reasons)
+    }
+
     /// What is on screen as a sheet. Every question WAITS for an answer — dismissing it
     /// any other way is treated as Cancel, never as a silent default.
     enum Prompt {

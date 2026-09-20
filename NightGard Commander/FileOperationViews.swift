@@ -46,6 +46,25 @@ struct FileOperationSheet: View {
 // MARK: - Shared pieces
 
 private enum Fmt {
+    /// "about 15m left" / "under a minute left". Build 101 lifted this out of the progress
+    /// bar so the information bar's overall figure is worded and rounded IDENTICALLY — two
+    /// places saying the same thing in two different ways is how a reader stops trusting both.
+    ///
+    /// Rounded so it reads as the estimate it is: 5-minute steps past an hour, whole minutes
+    /// under an hour. ⚠️ The rounding is not cosmetic — build 64 was a fault where a raw figure
+    /// read "about 4d 11h 25m left", a precision the measurement never had.
+    static func timeLeft(_ raw: Double) -> String {
+        let f = DateComponentsFormatter()
+        f.unitsStyle = .abbreviated
+        if raw >= 3600 {
+            f.allowedUnits = [.day, .hour, .minute]
+            return "about \(f.string(from: (raw / 300).rounded() * 300) ?? "") left"
+        } else if raw >= 60 {
+            f.allowedUnits = [.minute]
+            return "about \(f.string(from: (raw / 60).rounded() * 60) ?? "") left"
+        }
+        return "under a minute left"
+    }
     static func size(_ bytes: Int64) -> String {
         ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
     }
@@ -768,13 +787,25 @@ private struct SummaryView: View {
                 }
                 .fixedSize(horizontal: false, vertical: true)
             }
-            if summary.skipped.isEmpty && summary.failed.isEmpty && summary.notes.isEmpty {
+            // Build 101 — the clash folder gets its own line, above the lists, because it is
+            // the one thing on this sheet that is still waiting on him.
+            if !summary.quarantined.isEmpty, let home = summary.quarantineFolder {
+                Label {
+                    Text("\(Fmt.plural(summary.quarantined.count, "file")) had a name already taken and \(summary.quarantined.count == 1 ? "was" : "were") put in “\((home as NSString).lastPathComponent)”. Nothing was lost and nothing was left behind in the source.")
+                        .fixedSize(horizontal: false, vertical: true)
+                } icon: {
+                    Image(systemName: "tray.full.fill")
+                }
+                .foregroundStyle(.orange)
+            }
+            if summary.skipped.isEmpty && summary.failed.isEmpty && summary.notes.isEmpty && summary.quarantined.isEmpty {
                 Label("Nothing was skipped and nothing failed.", systemImage: "checkmark.circle.fill")
                     .foregroundStyle(.green)
             }
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
                     section("Failed", summary.failed, "xmark.octagon.fill", .red)
+                    section("Name already taken", summary.quarantined, "tray.full.fill", .orange)
                     section("Skipped", summary.skipped, "arrow.uturn.right.circle", .orange)
                     // No heading over the notes — his ask, 2026-09-19: the blue "Good to know"
                     // looked like a link that did nothing. The notes themselves stay.
@@ -787,6 +818,34 @@ private struct SummaryView: View {
                     Button("Undo This Move") { controller.dismissSummary(); controller.undo(logAt: log) }
                         .help("Puts everything back where it came from, and brings back anything that was replaced from the Trash.")
                         .controlSize(.large)
+                }
+                // Build 101 — his design, 2026-09-20, after a night of "already in the target"
+                // prompts: "open a list of them in commander … maybe it id a commander pane
+                // where the user can move them wherer they want to". The skipped files stayed
+                // where they were, scattered across their own folders; this puts the whole set
+                // in a pane so he can look at them and move them with the ordinary keys.
+                if !summary.quarantined.isEmpty {
+                    Button("Name These \(summary.quarantined.count) in a Pane") {
+                        controller.showInPane(summary.quarantined, titled: "Name already taken")
+                        controller.dismissSummary()
+                    }
+                    .help("Opens the name-clash folder in a pane: rename each one with ⌘9 and move them where they belong with ⌘6.")
+                    .controlSize(.large)
+                }
+                if !summary.skipped.isEmpty {
+                    Button("Show \(summary.skipped.count) Skipped in a Pane") {
+                        controller.showInPane(summary.skipped, titled: skippedListingTitle)
+                        controller.dismissSummary()
+                    }
+                    .help("Opens every skipped file in a Commander pane — why each was skipped, Show in Finder for each, and Move them wherever you want.")
+                    .controlSize(.large)
+                }
+                if !summary.failed.isEmpty {
+                    Button("Show \(summary.failed.count) Failed in a Pane") {
+                        controller.showInPane(summary.failed, titled: "Failed — \(summary.kind.verb)")
+                        controller.dismissSummary()
+                    }
+                    .controlSize(.large)
                 }
                 Spacer()
                 Button("Done") { controller.dismissSummary() }
@@ -815,6 +874,12 @@ private struct SummaryView: View {
         var parts = path.split(separator: "/").map(String.init)
         if parts.first == "Volumes" { parts.removeFirst() } else { parts.insert("Macintosh HD", at: 0) }
         return parts.joined(separator: " › ")
+    }
+
+    /// Names the bar it came from, so two listings from one scan are told apart.
+    private var skippedListingTitle: String {
+        if let bar = summary.barName { return "Skipped — \(bar)" }
+        return "Skipped — \(summary.kind.verb)"
     }
 
     private var title: String {
@@ -1030,19 +1095,7 @@ struct FileOperationProgressBar: View {
         if job.kind == .move && !job.isUndo { parts[0] += " (includes reading each copy back to verify it)" }
         if p.bytesPerSecond > 0 { parts.append("\(Fmt.size(Int64(p.bytesPerSecond)))/s") }
         if let raw = p.secondsLeft {
-            // Rounded, so it reads as the estimate it is: 5-minute steps past an hour,
-            // whole minutes under an hour, "under a minute" at the end.
-            let f = DateComponentsFormatter()
-            f.unitsStyle = .abbreviated
-            if raw >= 3600 {
-                f.allowedUnits = [.day, .hour, .minute]
-                parts.append("about \(f.string(from: (raw / 300).rounded() * 300) ?? "") left")
-            } else if raw >= 60 {
-                f.allowedUnits = [.minute]
-                parts.append("about \(f.string(from: (raw / 60).rounded() * 60) ?? "") left")
-            } else {
-                parts.append("under a minute left")
-            }
+            parts.append(Fmt.timeLeft(raw))
         } else if p.filesDone > 0 && p.filesDone < p.filesTotal {
             // No large file timed yet — a guess here was 357 hours for a two-hour job.
             parts.append("estimating time left…")
@@ -1077,6 +1130,13 @@ struct FileOperationOverallBar: View {
 
     private func summary(_ governor: JobGovernor) -> String {
         let jobs = controller.jobs
+        // Build 101 — the bar no longer hides when the work stops, so it has to have
+        // something true to say when there is none. "0 tasks" is technically correct and
+        // reads like a fault; "Idle" reads like an answer. The governor still gets its
+        // say here, because an unstable system is worth knowing about while nothing runs.
+        if jobs.isEmpty {
+            return governor.isUnstable ? "Idle · System unstable: \(governor.reasonText)" : "Idle"
+        }
         var counts: [(String, Int)] = []
         func add(_ label: String, _ n: Int) { if n > 0 { counts.append((label, n)) } }
         let running = jobs.filter { !$0.progress.isPaused }
@@ -1087,7 +1147,33 @@ struct FileOperationOverallBar: View {
         add("paused by you", jobs.filter { $0.progress.isPaused && $0.governorPausedFor == nil }.count)
         var text = "\(jobs.count) \(jobs.count == 1 ? "task" : "tasks")"
         if !counts.isEmpty { text += " — " + counts.map { "\($0.1) \($0.0)" }.joined(separator: ", ") }
+        // Build 101 — his ask, 2026-09-20: "what about a time remaining counter in the commander
+        // information bar to the user where it says 2 tasks 2 moving right now". Per-bar figures
+        // were on screen; the one number he actually wanted — when is ALL of this done — was not.
+        //
+        // ⚠️ THE BARS RUN IN PARALLEL, SO THIS IS THE LONGEST ONE, NOT THE SUM. Adding them
+        // would have said 24m for two bars that finish in 15. A sum is the right answer only
+        // for work done one after another, and this work is not.
+        //
+        // ⚠️ It is deliberately PESSIMISTIC and says so by being a "longest": when one bar ends
+        // the others get its share of the link and speed up, so the real end tends to arrive
+        // early. An estimate that overshoots and improves is kinder than one that slips.
+        if let overall = overallSecondsLeft(jobs) {
+            text += " · all \(Fmt.timeLeft(overall))"
+        } else if jobs.contains(where: { $0.progress.phase == .transferring }) {
+            text += " · estimating time left…"
+        }
         if governor.isUnstable { text += " · System unstable: \(governor.reasonText)" }
         return text
+    }
+
+    /// When everything on screen is done: the longest of the running jobs. Nil until at least
+    /// one job has a real estimate — never a guess, and never zero just because nothing is known.
+    /// A paused job is left out: it is not counting down, and including it would freeze the
+    /// number at whatever it was when he pressed Pause.
+    private func overallSecondsLeft(_ jobs: [FileOperationJob]) -> Double? {
+        jobs.filter { !$0.progress.isPaused }
+            .compactMap { $0.progress.secondsLeft }
+            .max()
     }
 }

@@ -34,6 +34,59 @@ class FileSystemService {
     var lastVisitedFolder: String? = nil // Track folder we came from for scroll restoration
     var sortMethod: FileSortMethod = .none
 
+    // MARK: - Virtual listing (build 101)
+
+    /// A pane showing a SET of files that do NOT share a folder — the skipped list from a
+    /// run. His design, 2026-09-20, after a night of "already in the target" prompts:
+    /// *"open a list of them in commander where you can show what iformation you know, why it
+    /// was skipped and a view in finder for each file … maybe it id a commander pane where the
+    /// user can move them wherer they want to."*
+    ///
+    /// ⭐ **Move needed no change for this.** `moveToOtherPane` builds its sources from each
+    /// selected item's own absolute path, not from the pane's folder, so a listing whose items
+    /// live in a hundred different folders moves correctly as it stands. That is why this is a
+    /// listing and not a folder of symlinks — nothing is written to disk to make it work.
+    struct VirtualListing: Equatable {
+        var title: String
+        /// Source of truth. `files` is rebuilt from these, so anything he moves away simply
+        /// leaves the list on the next refresh.
+        var paths: [String]
+        /// path → why it was skipped, shown under the name.
+        var reasons: [String: String] = [:]
+    }
+
+    /// Non-nil while this pane is showing a listing instead of a folder.
+    var virtualListing: VirtualListing?
+
+    /// Show a set of files in this pane. Navigating anywhere returns it to an ordinary folder.
+    func showVirtualListing(title: String, paths: [String], reasons: [String: String] = [:]) {
+        virtualListing = VirtualListing(title: title, paths: paths, reasons: reasons)
+        loadFiles()
+    }
+
+    /// Why a given row is in the list — nil for an ordinary folder.
+    func listingReason(for path: String) -> String? { virtualListing?.reasons[path] }
+
+    /// Rebuild `files` from the listing's paths, dropping anything that is no longer there.
+    /// **A file he has moved away disappears from the list, which is the whole point** — the
+    /// list shrinks as he deals with it, and an empty list means he is done.
+    private func loadVirtualFiles() {
+        guard let listing = virtualListing else { return }
+        errorMessage = nil
+        files = listing.paths.compactMap { path -> FileItem? in
+            let url = URL(fileURLWithPath: path)
+            var isDir: ObjCBool = false
+            guard fileManager.fileExists(atPath: path, isDirectory: &isDir) else { return nil }
+            let rv = try? url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey, .creationDateKey])
+            return FileItem(name: url.lastPathComponent,
+                            path: path,
+                            isDirectory: isDir.boolValue,
+                            size: rv?.fileSize ?? 0,
+                            modificationDate: rv?.contentModificationDate ?? Date(),
+                            creationDate: rv?.creationDate ?? Date())
+        }
+    }
+
     private let fileManager = FileManager.default
 
     init(startPath: String = NSHomeDirectory()) {
@@ -104,6 +157,8 @@ class FileSystemService {
     }
 
     func loadFiles() {
+        // Build 101: a listing is not a folder — rebuild it from its own paths instead.
+        if virtualListing != nil { loadVirtualFiles(); return }
         files = []
         errorMessage = nil
 
@@ -261,11 +316,19 @@ class FileSystemService {
     func navigateToFolder(_ path: String) {
         // Remember current folder name before navigating
         lastVisitedFolder = URL(fileURLWithPath: currentPath).lastPathComponent
+        virtualListing = nil   // build 101: going to a folder leaves the listing behind
         currentPath = path
         loadFiles()
     }
 
     func navigateUp() {
+        // Build 101: Up out of a listing goes back to the folder the pane was in, not to the
+        // listing's parent — a listing has no parent.
+        if virtualListing != nil {
+            virtualListing = nil
+            loadFiles()
+            return
+        }
         let url = URL(fileURLWithPath: currentPath)
         // Remember which folder we're leaving
         lastVisitedFolder = url.lastPathComponent

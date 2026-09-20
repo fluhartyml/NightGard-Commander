@@ -471,6 +471,19 @@ nonisolated struct FileOpSummary: Sendable {
     /// Things he should know that are not failures — e.g. copied instead of moved because
     /// it lives inside a library an app is using right now.
     var notes: [Item] = []
+    /// Build 101 — files whose real name was already taken in the target, set aside in the
+    /// quarantine folder instead of being skipped. His design, 2026-09-20: *"the list of files
+    /// skipped could also be diverted to a quarantined finder folder and presented to the user
+    /// to view and give them unique names and refile them."*
+    ///
+    /// ⭐ **Why divert rather than skip.** Build 77 exists because of his rule *"i dont want to
+    /// skip because the move is how i keep track"* — a skip leaves the file in the source and
+    /// breaks that. A diverted file HAS left the source, so an empty source still means done.
+    /// And it keeps him in charge of the name: an automatic "keep both" would bury
+    /// "IMG_0363 2.JPG" in the target, which is a name nobody chose.
+    var quarantined: [Item] = []
+    /// Where they were put, when there are any.
+    var quarantineFolder: String?
     var logURL: URL?
     var canUndo = false
     var wasUndo = false
@@ -505,6 +518,9 @@ nonisolated enum LogEntry: Codable, Sendable {
     case removedSourceFolder(path: String)
     case skipped(path: String, reason: String)
     case failed(path: String, message: String)
+    /// Build 101 — landed in the quarantine folder because its name was taken. Undo puts it
+    /// back where it came from, exactly like a move, because that is what it was.
+    case quarantined(from: String, to: String, clashedWith: String)
 }
 
 nonisolated struct OperationLog: Codable, Sendable {

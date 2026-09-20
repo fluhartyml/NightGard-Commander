@@ -1113,7 +1113,48 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
         if let date {
             try? fm.setAttributes([.creationDate: date, .modificationDate: date], ofItemAtPath: partial.path)
         }
-        guard !exists(dst) else { throw EngineError(message: "“\(dst.lastPathComponent)” is already in the target.") }
+        // ⭐ BUILD 101 — the name is taken. Until now this threw, and the generic error box
+        // offered Retry / Skip / Skip All: his merge rule was never consulted on this path, so
+        // a Photos library full of UUID files whose real names collide asked him the same
+        // question hundreds of times. His words, 2026-09-20: *"not knowing it can save both
+        // files or merge because it never asked"* — and then the fix itself: *"the list of
+        // files skipped could also be diverted to a quarantined finder folder."*
+        //
+        // ⚠️ The copy in `partial` is already written AND hash-verified at this point, so both
+        // branches below are a rename. **Nothing is copied twice and nothing is thrown away.**
+        if exists(dst) {
+            if try await bytesEqual(partial, dst) {
+                // Identical — his rule is merge. The copy already in the target is where the
+                // content lives; this one never needed to travel.
+                try? fm.removeItem(at: partial)
+                partialExists = false
+                if move {
+                    // Only now, with a verified identical copy proven to be in the target.
+                    try fm.removeItem(at: src)
+                    log.entries.append(.removedDuplicate(path: src.path, keptAt: dst.path))
+                }
+                summary.notes.append(.init(path: src.path,
+                    reason: "Identical to “\(dst.lastPathComponent)” already in the target, so it was merged\(move ? " and removed from the source" : "")."))
+                progress.filesDone += 1
+                await report()
+                return
+            }
+            // Different files, same name — his rule is keep both, but he names them, not me.
+            let home = try quarantineFolder()
+            let parked = uniqueName(for: home.appendingPathComponent(dst.lastPathComponent))
+            try posixRename(partial, parked)
+            partialExists = false
+            if move { try fm.removeItem(at: src) }
+            log.entries.append(.quarantined(from: src.path, to: parked.path, clashedWith: dst.path))
+            summary.quarantined.append(.init(path: parked.path,
+                reason: "Its name “\(dst.lastPathComponent)” was already taken by a different file. Give it a name and move it where it belongs."))
+            summary.quarantineFolder = home.path
+            summary.filesTransferred += 1
+            summary.bytesTransferred += size
+            progress.filesDone += 1
+            await report()
+            return
+        }
         try posixRename(partial, dst)
         partialExists = false
 
@@ -1685,7 +1726,13 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
         summary.wasUndo = true
         progress.phase = .transferring
         runningSince = Date()
-        let entries = undone.entries.reversed()
+        // Build 101: a quarantined file was moved — to the clash folder instead of its
+        // intended name — so undo puts it back exactly the way it puts a move back. Mapping it
+        // here rather than adding a second copy of the restore block keeps one path to test.
+        let entries = undone.entries.reversed().map { entry -> LogEntry in
+            if case let .quarantined(from, to, _) = entry { return .moved(from: from, to: to) }
+            return entry
+        }
         progress.filesTotal = entries.filter {
             if case .moved = $0 { return true }
             if case .removedDuplicate = $0 { return true }
@@ -1739,6 +1786,11 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
                 case let .removedSourceFolder(path):
                     try? fm.createDirectory(atPath: path, withIntermediateDirectories: true)
                 case .copied, .skipped, .failed:
+                    break
+                // Build 101: mapped to .moved above, so it never arrives here. Named rather
+                // than swept into a `default:` so that adding a future entry still fails to
+                // compile instead of being silently ignored by undo.
+                case .quarantined:
                     break
                 }
             }
@@ -2102,6 +2154,18 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
     }
 
     /// `claimant` also claims the new name among sibling bars (build 76).
+    /// Build 101 — where a name clash is parked, made only when something actually needs it.
+    /// It sits in the target so it travels with the files it belongs to, and it is named to
+    /// say what it is on sight, in Finder, without this app.
+    private func quarantineFolder() throws -> URL {
+        let home = targetDir.appendingPathComponent("_Name clashes — needs your attention")
+        if !exists(home) {
+            try fm.createDirectory(at: home, withIntermediateDirectories: true)
+            log.entries.append(.createdFolder(path: home.path))
+        }
+        return home
+    }
+
     private func uniqueName(for dst: URL, claimant: URL? = nil) -> URL {
         let folder = dst.deletingLastPathComponent()
         let ext = dst.pathExtension

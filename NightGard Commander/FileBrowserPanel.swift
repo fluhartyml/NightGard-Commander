@@ -325,9 +325,11 @@ struct FileBrowserPanel: View {
                 .buttonStyle(.borderless)
                 .help(showPreview.wrappedValue ? "Hide the preview" : "Show a preview of the selected file or folder")
 
-                TickerText(text: fileSystem.currentPath)
+                // Build 101: a listing is not a folder, so the path bar names the listing.
+                TickerText(text: fileSystem.virtualListing.map { "\($0.title) — \($0.paths.count) items (not a folder)" }
+                                 ?? fileSystem.currentPath)
                     .font(.system(.caption, design: .monospaced))
-                    .foregroundColor(.secondary)
+                    .foregroundColor(fileSystem.virtualListing == nil ? .secondary : .orange)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
 
@@ -512,6 +514,19 @@ struct FileBrowserPanel: View {
                                             .onAppear {
                                                 isRenameFocused = true
                                             }
+                                    } else if let why = fileSystem.listingReason(for: item.path) {
+                                        // Build 101 — his ask, 2026-09-20: "show what iformation
+                                        // you know, why it was skipped". The reason belongs on
+                                        // the row; a list that does not say why is just a list.
+                                        VStack(alignment: .leading, spacing: 1) {
+                                            Text(item.name).lineLimit(1)
+                                            Text(why)
+                                                .font(.caption)
+                                                .foregroundColor(.orange)
+                                                .lineLimit(2)
+                                                .fixedSize(horizontal: false, vertical: true)
+                                        }
+                                        .help(why)
                                     } else {
                                         Text(item.name)
                                             .lineLimit(1)
