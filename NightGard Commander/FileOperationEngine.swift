@@ -2066,8 +2066,21 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
 
     // MARK: - Log
 
+    /// ⛔ BUILD 105 — THE SAVE INTERVAL HAS TO GROW WITH THE LOG.
+    ///
+    /// **Measured 2026-09-20:** the log for his overnight move reached **21.8 MB — 29,090
+    /// entries and 86,941 sources** — and a flat 3-second timer was re-encoding and
+    /// rewriting the whole of it, pretty-printed, twenty times a minute. The cost of the
+    /// undo log was growing with the job while its save rate stayed fixed, so the longer a
+    /// move ran the more of the machine went into writing the same file again.
+    ///
+    /// So the interval scales with the entry count: still every 3 seconds for an ordinary
+    /// job, about every 30 at 30,000 entries, capped at a minute. **The cap matters** — the
+    /// log is what makes an interrupted move recoverable, so it can be cheaper but it must
+    /// never become rare. A crash between saves costs the undo history for that gap.
     private func saveLogIfDue() {
-        if Date().timeIntervalSince(lastLogSave) > 3 { saveLog() }
+        let due = min(60, max(3, Double(log.entries.count) / 1000))
+        if Date().timeIntervalSince(lastLogSave) > due { saveLog() }
     }
 
     private func saveLog() {
@@ -2084,7 +2097,10 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
     private func saveLog(_ log: OperationLog, to url: URL) {
         try? fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        // Build 105: pretty-printing is for a human reading the file, and past a few thousand
+        // entries nobody is. It costs both size and encode time on every save, so a large log
+        // is written compactly. Small logs stay readable, which is when reading one is useful.
+        encoder.outputFormatting = log.entries.count > 2000 ? [.sortedKeys] : [.prettyPrinted, .sortedKeys]
         encoder.dateEncodingStrategy = .iso8601
         if let data = try? encoder.encode(log) { try? data.write(to: url, options: .atomic) }
     }

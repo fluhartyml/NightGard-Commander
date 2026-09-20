@@ -925,3 +925,181 @@ one starting itself. Two different scans never block each other — the queue is
 **Tested:** all-at-once starts every folder; one-at-a-time starts only the first and keeps the
 rest (not loses them); each begins in order as the last ends; a Cancel All stops anything further
 from starting; and two scans run one bar each.
+
+---
+
+# 2026-09-20 — What the progress numbers actually mean, and the ghost sheet
+
+**Written at his instruction: *"write to notes and code"*, and *"dont just notate"* — so every
+item below is fixed in code, not merely recorded. Builds 101–105.**
+
+## The one thing to understand: Commander plans 300 files ahead, not the whole job
+
+`chunkSize = 300` (`FileOperationEngine.swift`). Planning does **not** finish before moving starts
+— build 95 made it plan a chunk, move it, plan the next. **So `filesTotal` and `bytesTotal` GROW as
+the job runs**, and every figure derived from them describes *what has been planned so far*, never
+the job.
+
+**This is the source of nearly every "the numbers are lying" report**, and his screen proved it:
+
+| Time | Bar read | Gap |
+|---|---|---|
+| 08:08 | `15,992 of 16,200` | 208 |
+| 08:51 | `19,620 of 19,800` | 180 |
+
+**3,628 files moved in 43 minutes, and the total grew by 3,600.** The gap never closed, so
+*"about 6m left"* said six minutes for three quarters of an hour. Meanwhile the **real** remainder
+measured off the source was **492,031 files / 590 GB** in `_Photo Merge Workspace` and
+**503,910 / 618 GB** in `Backup` — about **675,000 media files**, a week of wall clock at the
+measured rate. ⛔ **Never quote the on-screen figure as a finish time while chunks remain.**
+
+**Build 102 makes the app say this itself:** `FileOpProgress.allPlanned` turns true on the final
+chunk, and until then every time figure is suffixed **"(planned so far)"** — per bar and in the
+information bar.
+
+## Time left: bytes over the wall clock (his formula, build 103)
+
+***"the total time should be derived from the bytes over time, total bytes to transfer as compared
+to actual time taken so far to transfer so far and time remaining to transfer remaining bytes."***
+
+```
+rate      = bytesDone / elapsed        // elapsed already excludes paused time
+timeLeft  = (bytesTotal - bytesDone) / rate
+```
+
+⚠️ **This is NOT the bytes-only estimate that once said 174,121 hours.** That one divided by an
+*instantaneous data rate* — seconds spent moving bytes — so every per-file round trip was charged
+as if it were data. **Dividing by the WALL CLOCK puts the opens, fsyncs, renames, the verify
+read-back and the seeks inside the measurement**, where they belong. It is also the same division
+that produces the KB/s on the bar, so the speed and the time left finally agree with each other.
+
+⛔ **The warm-up guard is the whole defence.** One second in, a few hundred bytes moved, the rate is
+near zero and the remainder divided by it is astronomical — **that was the 174,121 hours: an early
+sample, not a wrong formula.** Nothing shows until 20 seconds and real data have passed.
+
+⚠️ **Known limit:** it is a cumulative average, so a sudden change takes a long time to surface.
+When the overnight move fell from ~1 MB/s to 184 KB/s at 23:00, six hours of faster bytes would
+have kept the estimate roughly double the truth for hours. **A rolling window would fix it and was
+offered; he has not asked for it.**
+
+## The information bar (build 101/102/104)
+
+Always visible now — it used to vanish with the work, so the line that says what Commander is doing
+was absent exactly when you looked to see *whether* it was doing anything. Reads **`Idle`** when
+nothing runs. It sits above the ⌘3–⌘9 command buttons (`ContentView.swift`), which is where he
+asked for it.
+
+**Build 104 — pausing a bar must make the total LONGER.** His catch: *"if the user pauses a status
+bar it effects the total time remaining."* The old figure filtered paused bars out and took the
+`max()` of the rest, so **pausing a bar made the estimate improve** although not one byte had
+moved. Now it is his formula one level up: **every bar's remaining bytes, paused included, ÷ the
+rate of the bars actually moving.** A paused bar contributes its work but not its speed.
+
+⚠️ **The relay is what made the old behaviour indefensible** — see below. A paused bar is now
+*queued*, not set aside.
+
+## The relay (build 102)
+
+***"the user may have paused all but one status bar and left, when one bar finishes unattended the
+next bar closest to the top automatically unpauses and it auto unpauses until all status bars
+complete."*** `FileOperationController.resumeNextPausedBar()`.
+
+Three limits, all deliberate:
+- ⛔ **Only a pause HE made.** A governor pause stays — that pause is the machine reporting
+  trouble, and overruling it unattended silences the only thing watching the hardware.
+- **One bar per finish**, so the number running stays what he left it at.
+- ⛔ **A cancel is not a finish** and promotes nothing. He is at the keyboard in that moment.
+
+## The clash path — why "already in the target" cost a whole night (build 101)
+
+`FileOperationEngine.swift:1116` checked `!exists(dst)` **AFTER** copying the whole file over the
+network into a `.ngc-partial` and hash-verifying it, then **threw the verified copy away** and
+raised a plain error → generic catch (1247) → `askError` → **Retry/Skip/Skip All/Cancel All**.
+
+⛔ **It never reached the Merge / Keep Both / Replace question. His merge rule was never violated —
+it was never consulted on this path.** And the failures landed in `summary.failed`, **not**
+`summary.skipped`.
+
+**Why so many:** Photos originals are renamed from their UUID to `asset.realName` on extraction, so
+genuinely different photos collide on one display name (`F38A056C….jpeg` → `IMG_0363 2.JPG`). The
+dialog reports the *destination* name against the *source* path, which is what made it look wrong.
+
+**Now:** identical bytes merge; different bytes divert to **`_Name clashes — needs your attention`**
+in the target under a free name, **with no dialog either way**. It costs almost nothing — the file
+is already copied and verified, so diverting is a rename, and the copy that used to be discarded is
+the one that gets used. His design, and better than the symlink staging it replaced:
+***"the list of files skipped could also be diverted to a quarantined finder folder and presented to
+the user to view and give them unique names and refile them."***
+
+**It reconnects to build 77's reason, in his words:** *"i dont want to skip because the move is how
+i keep track."* **Skip breaks the tracking; quarantine preserves it** — the file leaves the source
+either way, so an empty source still means done.
+
+⬜ **NOT CONFIRMED: why the planner misses them.** `claimed` resolves incoming-vs-incoming on the
+flat path; the **extract** path is separate. Two bars extracting into one `Photos` folder, or
+chunked planning racing ahead, are candidates. **Do not state either as fact.**
+
+## ⛔ The ghost sheet — a modal with no door (fixed, build 105)
+
+***"why does this ghost sheet come up? it causes me to have to force quit commander, it happened
+after i tried canceling a status bar."*** A grey sheet, no content, no buttons, window blocked.
+
+**Two independent routes produced it. Both are fixed.**
+
+**1. The summary sheet could not finish drawing.** Its Failed/Skipped/Quarantined lists rendered in
+a **plain `VStack`** inside a ScrollView — not lazy, and uncapped — building an HStack, two Texts
+and a Button for **every** item on the main thread. Cancelling is exactly what produces a summary,
+and the log for that run was **21.8 MB, 29,090 entries, 86,941 sources**. The frame appeared, the
+content never painted, and **the buttons are part of the content that never rendered.**
+→ now a `LazyVStack`, capped at **200 rows**, with *"Show All N in a Pane"* sending the overflow to
+the build-101 pane.
+
+**2. Four sheets could present with nothing in them.** All written as
+`.sheet(isPresented: $flag) { if let x = optional { … } }` — if the flag is true while the optional
+is nil, SwiftUI shows the sheet and renders nothing, **and every Close button lived inside the
+`if let`.** → each now has an `else` branch showing **`SheetRecovery`** (`SheetRecovery.swift`),
+which always has a Close button.
+
+⚠️ **The fix is deliberately NOT "work out how the flag and the optional got out of step."** That
+is still worth fixing at the source, but a diagnosis cannot be relied on to be complete, and **a
+sheet that cannot be dismissed is a trap whatever the cause.** Force Quit on this app means killing
+a file operation mid-flight.
+
+## The undo log was rewriting itself every 3 seconds (fixed, build 105)
+
+21.8 MB, pretty-printed, re-encoded and rewritten **twenty times a minute** — the cost grew with the
+job while the save rate stayed fixed. Now the interval scales with the entry count
+(3 s ordinary → ~30 s at 30,000 entries, **capped at 60**) and logs over 2,000 entries are written
+compactly. ⛔ **The cap matters:** the log is what makes an interrupted move recoverable, so it may
+be cheaper but must never become rare.
+
+## Why the media scan is slower than a plain Move
+
+A Move keeps the folder structure and makes no decisions. The **media scan** additionally
+classifies every file by extension, picks a destination per file, flattens into Photos/Audio/Video
+so each file lands in a folder already holding thousands, and renames Photos-library originals to
+their real names — **which is what generates the collisions above.** For a whole-drive migration the
+straight Move is the cheaper path.
+
+**Both still copy → read the copy back to verify → retire the source.** On a mechanical destination
+that read-back is expensive: it seeks back for data just written. ⬜ **Whether it can be turned off
+for a target like this was offered and not yet answered.**
+
+## The hardware path, measured (not assumed)
+
+`Raid_4x4` is **local** — `/dev/disk6`, HFS, SSD. `Cold Storage 12TB` is **`smbfs` from
+`HomeLAB_A`**, i.e. a mechanical disk on USB *to the Mac mini*, reached over the network. So the
+route is **SSD → SMB → mini → USB → platters.**
+
+⚠️ **The spinning disk is not the main cost.** A mechanical drive manages roughly 100 small files a
+second; the measured rate was **1.4 files/s at 620 KB/s, average file 441 KB**. That gap is the
+per-file SMB round trip — open, write, close, reopen to verify — not the platters. **A faster link
+would not fix it; fewer and larger operations would.**
+
+## ⬜ Open
+
+- **The four clash-quarantine tests have never been run** (`NightGard CommanderTests/ClashQuarantineTests.swift`).
+  `TEST_HOST` is set, so `xcodebuild test` launches a second Commander — it needs his machine free.
+- **Why the extract planner misses incoming-vs-incoming clashes** (above).
+- **A rolling-window rate** instead of the cumulative average (offered, not asked for).
+- **Turning off the verify read-back** for a mechanical/network target (offered, not answered).

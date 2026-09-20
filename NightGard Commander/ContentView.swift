@@ -654,6 +654,13 @@ struct ContentView: View {
                 DuplicateSweepDialog(folder: folder, fileOps: fileOps,
                                      onComplete: { refreshPanesTouchedByJobs() },
                                      isPresented: $showDuplicateSweep)
+            } else {
+                // ⛔ BUILD 105. Written as `if let` inside the sheet, this branch
+                // rendered NOTHING when the optional was nil — and the Close button
+                // lives inside the `if let`, so it vanished with the content. That is
+                // a modal with no way out and Force Quit as the only exit. Whatever
+                // state gets us here, there is always a door now.
+                SheetRecovery { showDuplicateSweep = false }
             }
         }
         .sheet(isPresented: $showTextEditor) {
@@ -665,6 +672,13 @@ struct ContentView: View {
                         showTextEditor = false
                     }
                 )
+            } else {
+                // ⛔ BUILD 105. Written as `if let` inside the sheet, this branch
+                // rendered NOTHING when the optional was nil — and the Close button
+                // lives inside the `if let`, so it vanished with the content. That is
+                // a modal with no way out and Force Quit as the only exit. Whatever
+                // state gets us here, there is always a door now.
+                SheetRecovery { showTextEditor = false }
             }
         }
         .sheet(isPresented: $showImagePreview) {
@@ -676,6 +690,13 @@ struct ContentView: View {
                         showImagePreview = false
                     }
                 )
+            } else {
+                // ⛔ BUILD 105. Written as `if let` inside the sheet, this branch
+                // rendered NOTHING when the optional was nil — and the Close button
+                // lives inside the `if let`, so it vanished with the content. That is
+                // a modal with no way out and Force Quit as the only exit. Whatever
+                // state gets us here, there is always a door now.
+                SheetRecovery { showImagePreview = false }
             }
         }
         .sheet(isPresented: $showMetadataEditor) {
@@ -687,6 +708,13 @@ struct ContentView: View {
                         showMetadataEditor = false
                     }
                 )
+            } else {
+                // ⛔ BUILD 105. Written as `if let` inside the sheet, this branch
+                // rendered NOTHING when the optional was nil — and the Close button
+                // lives inside the `if let`, so it vanished with the content. That is
+                // a modal with no way out and Force Quit as the only exit. Whatever
+                // state gets us here, there is always a door now.
+                SheetRecovery { showMetadataEditor = false }
             }
         }
         // STATE PERSISTENCE - Save paths whenever they change

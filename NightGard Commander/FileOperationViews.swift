@@ -802,8 +802,13 @@ private struct SummaryView: View {
                 Label("Nothing was skipped and nothing failed.", systemImage: "checkmark.circle.fill")
                     .foregroundStyle(.green)
             }
+            // ⛔ BUILD 105 — LAZY, AND THIS IS THE GHOST-SHEET FIX. A plain VStack builds
+            // EVERY row before the sheet can draw. On 2026-09-20 he cancelled a bar whose run
+            // had 86,941 sources, the sheet came up as a grey rectangle with no content and
+            // no buttons — because the buttons are part of the content that never rendered —
+            // and the only way out was Force Quit. A LazyVStack builds the rows he can see.
             ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
+                LazyVStack(alignment: .leading, spacing: 12) {
                     section("Failed", summary.failed, "xmark.octagon.fill", .red)
                     section("Name already taken", summary.quarantined, "tray.full.fill", .orange)
                     section("Skipped", summary.skipped, "arrow.uturn.right.circle", .orange)
@@ -924,7 +929,11 @@ private struct SummaryView: View {
                 if !name.isEmpty {
                     Label("\(name) (\(items.count))", systemImage: icon).font(.headline).foregroundStyle(color)
                 }
-                ForEach(items) { item in
+                // Build 105: a cap as well as laziness. Lazy stops the sheet hanging;
+                // the cap stops a scroll bar that represents 80,000 rows nobody will read.
+                // The overflow goes where it is useful — the pane from build 101, where he
+                // can select them and move them with the ordinary keys.
+                ForEach(items.prefix(Self.rowCap)) { item in
                     HStack(alignment: .firstTextBaseline) {
                         VStack(alignment: .leading, spacing: 2) {
                             Text((item.path as NSString).lastPathComponent).bold()
@@ -950,9 +959,23 @@ private struct SummaryView: View {
                     }
                     .contextMenu { Button("Show in Finder") { FinderReveal.show([item.path]) } }
                 }
+                if items.count > Self.rowCap {
+                    HStack {
+                        Text("…and \((items.count - Self.rowCap).formatted()) more")
+                            .foregroundStyle(.secondary)
+                        Button("Show All \(items.count.formatted()) in a Pane") {
+                            controller.showInPane(items, titled: name.isEmpty ? "Notes" : name)
+                            controller.dismissSummary()
+                        }
+                    }
+                }
             }
         }
     }
+
+    /// How many rows the sheet will draw before handing the rest to a pane. Big enough that
+    /// an ordinary run shows everything, small enough that a pathological one still opens.
+    private static let rowCap = 200
 }
 
 // MARK: - Undo Last Move…
