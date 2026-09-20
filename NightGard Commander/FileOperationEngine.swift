@@ -2007,23 +2007,31 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
     private func estimate() -> Double? {
         guard progress.phase == .transferring, let since = runningSince else { return nil }
         let elapsed = Date().timeIntervalSince(since)
-        guard elapsed > 5, progress.filesDone >= 10 else { return nil }
-        let filesLeft = Double(max(0, progress.filesTotal - progress.filesDone))
+        // ⛔ BUILD 103 REPLACES THE TWO-RATE MODEL WITH HIS, 2026-09-20: *"the total time
+        // should be derived from the bytes over time, total bytes to transfer as compared to
+        // actual time taken so far to transfer so far and time remaining to transfer
+        // remaining bytes."*
+        //
+        // WHY HIS IS RIGHT AND THE ORIGINAL BYTES-ONLY VERSION WAS NOT. The 174,121-hour
+        // figure above came from dividing by an INSTANTANEOUS DATA RATE — seconds spent
+        // moving bytes — so every per-file round trip was charged as though it were data.
+        // This divides by the WALL CLOCK the job has actually taken, which already contains
+        // the opens, the fsyncs, the renames, the verify read-back and the seeks. Nothing has
+        // to be modelled, because everything is already inside the measurement.
+        //
+        // It is also the rate shown on the bar (`bytesPerSecond` is this same division), so
+        // the speed and the time left finally describe each other. Two numbers on one line
+        // that do not agree is how a reader stops believing both. → build 101's shared Fmt
+        //
+        // ⚠️ THE WARM-UP GUARD IS THE WHOLE DEFENCE, AND ITS ABSENCE IS WHAT BROKE THIS
+        // BEFORE. One second in, with a few hundred bytes moved, the measured rate is near
+        // zero and the remaining bytes divided by it is astronomical — that is the 174,121
+        // hours, an early sample rather than a wrong formula. So nothing is shown until the
+        // job has been transferring for a real stretch AND has moved real data.
+        guard elapsed > 20, progress.filesDone >= 10, progress.bytesDone > 0 else { return nil }
+        let rate = Double(progress.bytesDone) / elapsed
         let bytesLeft = Double(max(0, progress.bytesTotal - progress.bytesDone))
-        // A large file's own overhead is already inside the data rate; charging it again per
-        // file overstates a little, never by days. An Undo is renames only and is not timed
-        // file by file, so it keeps the plain wall-clock rate.
-        let perFile: Double
-        if smallFiles > 0 { perFile = smallSeconds / Double(smallFiles) }
-        else if dataBytes == 0 { perFile = elapsed / Double(progress.filesDone) }
-        else { perFile = 0 }
-        var seconds = perFile * filesLeft
-        if bytesLeft > Double(Self.largeRead) * Double(max(1, Int(filesLeft))) {
-            // Real data still to come — needs a rate measured on whole large files.
-            guard dataSeconds > 0.2, dataBytes > 0 else { return nil }
-            seconds += bytesLeft / (Double(dataBytes) / dataSeconds)
-        }
-        return seconds
+        return bytesLeft / rate
     }
 
     // His report on build 60: *"it fluctuates days 1 hour 50 minutes to 22 minutes."* A raw
