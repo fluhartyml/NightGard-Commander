@@ -1266,6 +1266,9 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
         // said plainly rather than shown as a total that silently shrinks the percentage.
         progress.filesTotal += files
         progress.bytesTotal += bytes
+        // Build 102: the last chunk is the moment the totals stop growing, and therefore the
+        // first moment the time left is a finish time rather than a running subtotal.
+        if final { progress.allPlanned = true }
         if !startedTransferring { runningSince = Date(); startedTransferring = true }
         await report(force: true)
 

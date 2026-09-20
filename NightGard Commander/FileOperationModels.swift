@@ -447,6 +447,16 @@ nonisolated struct FileOpProgress: Sendable {
     /// 174,121 hours — every file's fixed cost was being charged as if it were data.
     var secondsLeft: Double?
 
+    /// Build 102 — true once the LAST chunk has been planned, so `filesTotal`/`bytesTotal`
+    /// have stopped growing and `secondsLeft` is the whole job rather than the part of it
+    /// that has been worked out so far.
+    ///
+    /// ⚠️ THIS IS THE DIFFERENCE BETWEEN A TOTAL AND A PROMISE. Build 95 made the totals
+    /// grow as later chunks are planned; the time left has always been computed against
+    /// them, so until this flag turns true the figure describes only what is planned —
+    /// it is not the finish time, and it must not be shown as one.
+    var allPlanned: Bool = false
+
     var fraction: Double {
         bytesTotal > 0 ? min(1, Double(bytesDone) / Double(bytesTotal))
                        : (filesTotal > 0 ? Double(filesDone) / Double(filesTotal) : 0)

@@ -1095,7 +1095,16 @@ struct FileOperationProgressBar: View {
         if job.kind == .move && !job.isUndo { parts[0] += " (includes reading each copy back to verify it)" }
         if p.bytesPerSecond > 0 { parts.append("\(Fmt.size(Int64(p.bytesPerSecond)))/s") }
         if let raw = p.secondsLeft {
-            parts.append(Fmt.timeLeft(raw))
+            // Build 102 — his ask, 2026-09-20: "chunk time left and total time left or just
+            // total time left". They are the SAME NUMBER at two different moments, which is
+            // why one figure carries both: until the last chunk is planned this is the time
+            // to finish what is PLANNED, and from that moment on the very same figure is the
+            // job's finish time. So it is labelled rather than duplicated.
+            //
+            // ⚠️ Printing the first as a total would be the lie. Build 95 made the totals
+            // grow as chunks land, so an unqualified figure would slip later every time one
+            // did — and a clock that keeps moving away from you is how he stops believing it.
+            parts.append(p.allPlanned ? Fmt.timeLeft(raw) : "\(Fmt.timeLeft(raw)) (planned so far)")
         } else if p.filesDone > 0 && p.filesDone < p.filesTotal {
             // No large file timed yet — a guess here was 357 hours for a two-hour job.
             parts.append("estimating time left…")
@@ -1159,7 +1168,11 @@ struct FileOperationOverallBar: View {
         // the others get its share of the link and speed up, so the real end tends to arrive
         // early. An estimate that overshoots and improves is kinder than one that slips.
         if let overall = overallSecondsLeft(jobs) {
-            text += " · all \(Fmt.timeLeft(overall))"
+            // Build 102: the overall figure is only as settled as the bars under it. If any
+            // running bar is still planning chunks, this is a subtotal too, and it says so —
+            // the alternative is one line qualifying itself while the line above it does not.
+            let settled = running.allSatisfy { $0.progress.allPlanned }
+            text += " · all \(Fmt.timeLeft(overall))" + (settled ? "" : " (planned so far)")
         } else if jobs.contains(where: { $0.progress.phase == .transferring }) {
             text += " · estimating time left…"
         }

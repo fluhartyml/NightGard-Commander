@@ -252,6 +252,30 @@ final class FileOperationController {
         if go { undo(log) }
     }
 
+    /// Build 102 — his ask, 2026-09-20: *"the user may have paused all but one status bar and
+    /// left, when one bar finishes unattended the next bar closest to the top automatically
+    /// unpauses and it auto unpauses until all status bars complete."*
+    ///
+    /// It turns a pile of bars into a QUEUE he can walk away from: pause all but one, leave,
+    /// and they run one after another instead of the run stopping at the first finish line.
+    /// "Closest to the top" is `jobs` order, which is the order they are drawn in.
+    ///
+    /// ⛔ IT ONLY EVER UNDOES A PAUSE HE MADE. A bar the governor paused is left exactly where
+    /// it is — the governor stopped it because the machine was in trouble, and resuming it
+    /// unattended would overrule the one thing watching the hardware while he is not there.
+    /// That is also why this does not use `governorResume()`: the two pauses mean different
+    /// things and only one of them is this feature's business.
+    ///
+    /// ⚠️ It resumes ONE bar per finish, not all of them. The number running therefore stays
+    /// what he left it at — if he left two going, two keep going. Releasing the whole queue at
+    /// once would hand the network more work than he chose to give it, on his behalf, while
+    /// he is asleep.
+    private func resumeNextPausedBar() {
+        guard let next = jobs.first(where: { $0.pausedByUser && $0.governorPausedFor == nil })
+        else { return }
+        next.togglePause()
+    }
+
     private func begin(_ job: FileOperationJob, sources: [URL], target: URL?,
                        onFinish: ((FileOpSummary) -> Void)?,
                        work: @escaping @Sendable () async -> FileOpSummary) {
@@ -270,6 +294,11 @@ final class FileOperationController {
             }
             self.withdrawQuestions(of: job)
             self.jobs.removeAll { $0 === job }
+            // ⛔ A CANCEL IS NOT A FINISH. Promoting the next bar after he presses Cancel
+            // would answer "stop" with "here is the next one" — he is at the keyboard in
+            // that moment and the queue is his to restart. The relay is for the bars that
+            // ran out of work while nobody was watching. → Commandment VIII
+            if !summary.cancelled { self.resumeNextPausedBar() }
             // Build 100: say WHICH bar this is and where it came in. Counted after the job
             // leaves `jobs`, so "still going" is the honest remainder, queued bars included.
             summary.barName = job.title
