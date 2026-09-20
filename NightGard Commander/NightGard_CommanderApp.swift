@@ -72,6 +72,12 @@ struct NightGard_CommanderApp: App {
                     NotificationCenter.default.post(name: .extractFromLibrary, object: nil)
                 }
                 .keyboardShortcut("e", modifiers: [.command, .option])
+                Divider()
+                // Build 92 — his: "they are different names but are the exact same image".
+                Button("Find Duplicate Media…") {
+                    NotificationCenter.default.post(name: .findDuplicates, object: nil)
+                }
+                .keyboardShortcut("7", modifiers: [.command, .option])
             }
 
             CommandGroup(replacing: .appSettings) {
@@ -149,4 +155,5 @@ extension Notification.Name {
     static let flattenCopy = Notification.Name("flattenCopy")
     static let flattenMove = Notification.Name("flattenMove")
     static let extractFromLibrary = Notification.Name("extractFromLibrary")
+    static let findDuplicates = Notification.Name("findDuplicates")
 }

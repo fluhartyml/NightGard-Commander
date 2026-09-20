@@ -724,3 +724,34 @@ compared too" on pairs of photos. It now says only what applies.
 **Tested:** Merge enabled on a differing pair; Merge keeps both there, contents of both intact,
 both leaving the source; ONE ticked answer merges two identical pairs and keeps both of a
 differing pair in the same bar, leaving the source empty; a lone identical pair still merges.
+
+## Build 92 — Find Duplicate Media: the copies a clash popup can never see (2026-09-19)
+
+**His ask:** ***"they are different names but are the exact same image"***
+
+A clash is only noticed when two files would land under the **same name**. The same photograph
+saved as `IMG_0042.jpg` and `2020-09-18 11.56.12.jpg` never meets itself, so both arrive and the
+media folder holds it twice. **Operations › Find Duplicate Media… (⌥⌘7)** goes the other way:
+it ignores names and compares contents.
+
+**How it stays cheap.** Files are grouped by SIZE first — two files of different sizes cannot be
+identical, and that costs nothing. Only inside a group of equal size is anything read, and then
+it is a streamed byte comparison. A folder of 90,000 one-of-a-kind photographs reads nothing.
+
+**Which copy is kept, and it is stated on the sheet:** the one already inside the designated
+media folder; failing that the one nearest the top of the tree; then the oldest.
+
+⛔ **It deletes nothing by itself.** The scan is read-only. The removal goes through the ordinary
+**Delete job** — Trash on an attached drive, a bar with Pause and Cancel, and an entry in the
+operation log, so **Undo covers it**.
+
+**Tested:** the same picture under three names in three folders is found as one set;
+⭐ **two DIFFERENT pictures of exactly the same size are NOT grouped** (the negative control that
+matters — a size-only match would have deleted a real photo); the media-folder copy is the keeper;
+a duplicated `.txt` is ignored in a media sweep; with no media folder the shallowest path wins;
+a folder where every file is a different size performs **zero** byte comparisons; and an
+unreadable file is reported rather than counted as a duplicate.
+
+⬜ **Still name-blind only for exact copies.** A re-saved or re-compressed photo is a different
+file, byte for byte, and is not a duplicate here. Comparing image data while ignoring EXIF — what
+build 88 does for MP3 tags — is the next step if he wants it.

@@ -33,6 +33,9 @@ struct ContentView: View {
     @State private var selectedLeftItems: Set<FileItem.ID> = []
     @State private var selectedRightItems: Set<FileItem.ID> = []
     @State private var showTextEditor = false
+    // Build 92 — Operations › Find Duplicate Media…
+    @State private var showDuplicateSweep = false
+    @State private var duplicateFolder: FileItem?
     @State private var showImagePreview = false
     @State private var showMetadataEditor = false
     @State private var previewItem: FileItem?
@@ -629,6 +632,16 @@ struct ContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: .extractFromLibrary)) { _ in
             extractToOtherPane()
         }
+        .onReceive(NotificationCenter.default.publisher(for: .findDuplicates)) { _ in
+            findDuplicates()
+        }
+        .sheet(isPresented: $showDuplicateSweep) {
+            if let folder = duplicateFolder {
+                DuplicateSweepDialog(folder: folder, fileOps: fileOps,
+                                     onComplete: { refreshPanesTouchedByJobs() },
+                                     isPresented: $showDuplicateSweep)
+            }
+        }
         .sheet(isPresented: $showTextEditor) {
             if let item = previewItem {
                 TextFileEditor(
@@ -958,6 +971,19 @@ struct ContentView: View {
             guard kind == .move else { return }
             clearSelection(pane, of: sourceFiles)
         }
+    }
+
+    /// Build 92 — Operations › Find Duplicate Media… Sweeps the folder open in the focused
+    /// pane (or the one selected in it) for files with the same contents under different
+    /// names, which a clash popup can never see. Read-only until he presses the button.
+    private func findDuplicates() {
+        let pane = focusedPane
+        let path = pane == .left ? leftFileSystem.currentPath : rightFileSystem.currentPath
+        let folder = activeSelectedItem?.isDirectory == true ? activeSelectedItem! :
+            FileItem(name: (path as NSString).lastPathComponent, path: path, isDirectory: true,
+                     size: 0, modificationDate: Date(), creationDate: Date())
+        duplicateFolder = folder
+        showDuplicateSweep = true
     }
 
     /// Plan 7.6 — the Photos library selected in the source pane, out into the other pane's
