@@ -876,3 +876,29 @@ across every progress report — **0**.
 > have to open the folders to find out makes human responces faster."* The thumbnail is not
 > decoration: **it is what lets him answer a clash without leaving the popup.**
 > → apartment memory `feedback_progress_must_prove_it_is_alive`
+
+## Build 98 — the chunk's count read against the whole job (2026-09-19)
+
+**His shape, exactly:** *"was thinking could it display something like (moving) (78 of 300) of
+1500."*
+
+Build 95 made the total grow as later chunks were planned, so a bar could read *"315 of 600"*
+while thousands of files were still to come — **it looked half finished when it had barely
+started.**
+
+**Now the bar carries two figures:**
+
+```
+Sorting media (moving) (315 of 600) of 12,480 — IMG_7128.PNG
+```
+
+The pair in brackets is what is planned and moving right now; the last number is **everything
+this bar was handed by the scan**, known before a single file is planned.
+
+⚠️ **It is the bar's SHARE, not a promise of file count.** A Photos library counts as one item
+there — how many photos come out of it is only known once its database is read — so the second
+number is stated plainly and never dressed up as something it is not. When it would be smaller
+than what is already planned, it is left off rather than shown wrong.
+
+**Tested** in the 700-file chunked run: the bar reports its whole share of 700 from the start,
+and what is done never exceeds it.

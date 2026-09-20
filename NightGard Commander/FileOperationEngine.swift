@@ -189,6 +189,10 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
         do {
             let valid = validatedSources()
             progress.phase = .checking
+            // Build 98: what this bar was handed. A Photos library counts as one item here —
+            // how many photos come out of it is only known once its database is read — so the
+            // figure is stated as the bar's share, never dressed up as a file count it is not.
+            progress.expectedTotal = valid.count
             switch mode {
             case .standard:
                 for src in valid {

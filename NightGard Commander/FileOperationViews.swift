@@ -990,8 +990,12 @@ struct FileOperationProgressBar: View {
         case .buildingFolders:
             return "Making the folders first — \(p.foldersMade.formatted()) of \(p.foldersToMake.formatted()) — \(p.currentName)"
         case .transferring:
-            if p.isPaused { return "Paused — \(p.filesDone.formatted()) of \(p.filesTotal.formatted()) done" }
-            return "\(verb) \(min(p.filesDone + 1, p.filesTotal).formatted()) of \(p.filesTotal.formatted()) — \(p.currentName)"
+            // Build 98 — his shape: "(moving) (78 of 300) of 1500". The first pair is what is
+            // planned and moving now; the second number is everything this bar was given, so a
+            // chunked run never looks like it is nearly finished when it has barely started.
+            let whole = p.expectedTotal > p.filesTotal ? " of \(p.expectedTotal.formatted())" : ""
+            if p.isPaused { return "Paused — \(p.filesDone.formatted()) of \(p.filesTotal.formatted())\(whole) done" }
+            return "\(verb) (\(min(p.filesDone + 1, p.filesTotal).formatted()) of \(p.filesTotal.formatted()))\(whole) — \(p.currentName)"
         case .finishing:
             return "Finishing…"
         }

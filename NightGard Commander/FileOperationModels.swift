@@ -426,6 +426,11 @@ nonisolated struct FileOpProgress: Sendable {
     var bytesTotal: Int64 = 0
     var bytesPerSecond: Double = 0
     var isPaused: Bool = false
+    /// Build 98 — his shape: *"could it display something like (moving) (78 of 300) of 1500"*.
+    /// Everything this bar was given by the scan, known before any of it is planned, so the
+    /// chunk's own count can be read against the whole job rather than against a total that
+    /// grows. Zero when it cannot be known up front (a Photos library's contents).
+    var expectedTotal: Int = 0
 
     // Plan 8.4 — progress by folder. "Folder 12 of 340 — name — file 88 of 412".
     var foldersMade: Int = 0
