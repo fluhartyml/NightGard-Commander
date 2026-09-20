@@ -1380,6 +1380,11 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
             if key == root { name = (root as NSString).lastPathComponent }
             progress.folderName = name
         }
+        // ⛔ Build 97 — his screen read "file 231 of 91". The folder's TOTAL was set only when
+        // the folder changed, so once build 95 began planning in chunks the numerator kept
+        // growing while the denominator stayed at the first chunk's count. It is re-read on
+        // every step now, because later chunks add files to a folder already in progress.
+        progress.filesInFolder = folderFileCounts[i]
         progress.fileInFolder += 1
         return isNew
     }

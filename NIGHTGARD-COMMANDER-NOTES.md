@@ -858,3 +858,21 @@ then opens as soon as the window is free.
 **Tested:** the memory rule — a brief warning never pauses, a cleared-and-renewed warning is
 judged from its own start, a warning held 30 s does pause, critical pauses on the first tick, and
 recovery clears it.
+
+## Build 97 — "file 231 of 91" (2026-09-19)
+
+Spotted on his screen while build 95's chunking ran: the bar's top line read *"Sorting media
+(moving) 231 of 351"* and the folder line underneath read *"file 231 of 91"*.
+
+**Cause.** The folder's total (`filesInFolder`) was set **only when the folder changed**. Before
+95 that was right — a folder's whole contents were planned before anything moved. With chunking,
+later chunks add more files to a folder already in progress, so the numerator kept climbing while
+the denominator stayed at the first chunk's count. **It is re-read on every step now.**
+
+**Tested:** the 700-file chunked run records the worst overrun of file-number over folder-total
+across every progress report — **0**.
+
+> **And why the preview earned its place, in his words, 2026-09-19:** *"with the preview i dont
+> have to open the folders to find out makes human responces faster."* The thumbnail is not
+> decoration: **it is what lets him answer a clash without leaving the popup.**
+> → apartment memory `feedback_progress_must_prove_it_is_alive`
