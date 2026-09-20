@@ -1171,22 +1171,49 @@ struct FileOperationOverallBar: View {
             // Build 102: the overall figure is only as settled as the bars under it. If any
             // running bar is still planning chunks, this is a subtotal too, and it says so —
             // the alternative is one line qualifying itself while the line above it does not.
-            let settled = running.allSatisfy { $0.progress.allPlanned }
+            // Build 104: the total now counts paused bars, so whether it is settled has to
+            // be asked of ALL of them — a paused bar still planning chunks is still work of
+            // an unknown size sitting in the number.
+            let settled = jobs.allSatisfy { $0.progress.allPlanned }
             text += " · all \(Fmt.timeLeft(overall))" + (settled ? "" : " (planned so far)")
-        } else if jobs.contains(where: { $0.progress.phase == .transferring }) {
+        } else if running.contains(where: { $0.progress.phase == .transferring }) {
             text += " · estimating time left…"
         }
         if governor.isUnstable { text += " · System unstable: \(governor.reasonText)" }
         return text
     }
 
-    /// When everything on screen is done: the longest of the running jobs. Nil until at least
-    /// one job has a real estimate — never a guess, and never zero just because nothing is known.
-    /// A paused job is left out: it is not counting down, and including it would freeze the
-    /// number at whatever it was when he pressed Pause.
+    /// When everything on screen is done — **paused bars included**.
+    ///
+    /// ⛔ BUILD 104 FIXES A REAL FAULT HE CAUGHT, 2026-09-20: *"if the user pauses a status
+    /// bar it effects the total time remaining."* The old version filtered paused jobs out
+    /// and took the longest of the rest, so **pausing a bar made the estimate IMPROVE** —
+    /// its work disappeared from the total although not one byte of it had gone anywhere.
+    ///
+    /// That was defensible before the relay. A paused bar used not to be counting down, and
+    /// including its frozen figure would have stuck the total at whatever it said when he
+    /// pressed Pause. **Build 102's relay changed the meaning: a paused bar is now QUEUED,
+    /// not set aside, and is guaranteed to run.** Work that is certain to happen belongs in
+    /// a total.
+    ///
+    /// So it is his own formula one level up — bytes over time, for the whole screen:
+    /// every bar's REMAINING BYTES, paused ones included, divided by the rate of the bars
+    /// actually MOVING. A paused bar therefore contributes its work but not its speed, and
+    /// pausing correctly makes the total LONGER, because fewer bars are draining one pile.
+    ///
+    /// ⚠️ This also replaces a `max()` of the per-bar figures, which was only ever right for
+    /// bars running in parallel at steady rates — and stopped being right the moment one of
+    /// them could be waiting its turn instead.
+    ///
+    /// Nil when nothing is moving: with every bar paused there is no rate to divide by, and
+    /// the counts in the line already say so. Never a guess, and never zero.
     private func overallSecondsLeft(_ jobs: [FileOperationJob]) -> Double? {
-        jobs.filter { !$0.progress.isPaused }
-            .compactMap { $0.progress.secondsLeft }
-            .max()
+        let bytesLeft = jobs.reduce(0.0) {
+            $0 + Double(max(0, $1.progress.bytesTotal - $1.progress.bytesDone))
+        }
+        let rate = jobs.filter { !$0.progress.isPaused }
+                       .reduce(0.0) { $0 + $1.progress.bytesPerSecond }
+        guard bytesLeft > 0, rate > 0 else { return nil }
+        return bytesLeft / rate
     }
 }
