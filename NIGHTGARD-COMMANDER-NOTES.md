@@ -780,3 +780,20 @@ like a wrong one.**
 
 **Also:** the build-88 test that asserted "Merge shown but NOT enabled" was updated, not the code
 — build 91 made Merge live on every pair on purpose.
+
+## Build 94 — the thumbnail that never loaded because nothing was on screen (2026-09-19)
+
+**He reported it twice:** *"the cards of the pictures didnt have thumbnails so i had to open show
+in finder"* · *"it doesnt show the actual pictures in the cards it shows an icon"*.
+
+⛔ **Build 93 fixed the wrong half.** Decoding was never the fault — measured on the exact file
+in his popup: **ImageIO 0.03 s, QuickLook 0.06 s**, both fine. The card held a **`Group` with no
+content** until the picture arrived, and **a view with nothing in it is not laid out, so the
+`.task` attached to it never ran.** The image was never asked for.
+
+**Now a placeholder is always on screen** — a grey rounded rectangle with a small spinner — and
+the picture replaces it when it decodes. 93's ImageIO-first order stays: it is both surer and
+quicker than QuickLook, which hands back a document ICON for anything it cannot render.
+
+⭐ **The lesson, and it is not about thumbnails:** work attached to a view runs only if that view
+exists. An empty placeholder is not a cosmetic choice; **it is what makes the loading happen.**

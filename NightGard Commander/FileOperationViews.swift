@@ -171,13 +171,24 @@ private struct CardThumbnail: View {
     @State private var image: NSImage?
 
     var body: some View {
-        Group {
+        // ⛔ Build 94 — this used to be a `Group` holding NOTHING until the picture arrived,
+        // and a view with no content is not laid out, so its `.task` never ran and the
+        // thumbnail never loaded. His report, twice: "it doesnt show the actual pictures in
+        // the cards it shows an icon". The decoding was never the fault — measured at 0.03 s
+        // on the very file he was looking at. **Something must always be on screen for the
+        // work attached to it to happen.**
+        ZStack {
             if let image {
                 Image(nsImage: image)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
                     .frame(maxWidth: .infinity, maxHeight: 150)
                     .clipShape(RoundedRectangle(cornerRadius: 6))
+            } else {
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(.quaternary)
+                    .frame(height: 90)
+                    .overlay { ProgressView().controlSize(.small) }
             }
         }
         .task(id: url) {
