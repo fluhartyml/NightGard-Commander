@@ -262,6 +262,18 @@ struct ScanForMediaDialog: View {
                     .padding(.leading, 4)
             }
 
+            // Build 90: what the scan deliberately left out, said rather than silent.
+            if !scanner.skippedFolders.isEmpty {
+                HStack(spacing: 4) {
+                    Image(systemName: "arrow.uturn.right")
+                        .foregroundColor(.secondary)
+                    Text("Skipped the designated media folder: \(scanner.skippedFolders.map { $0.lastPathComponent }.joined(separator: ", "))")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                .padding(.leading, 4)
+            }
+
             // Size and space info
             HStack {
                 Text("Total size: \(scanner.formatBytes(scanner.totalSize))")
@@ -533,7 +545,11 @@ struct ScanForMediaDialog: View {
     // MARK: - Operations
     private func startScanning() async {
         let sourceURLs = sourceFolders.map { URL(fileURLWithPath: $0.path) }
-        _ = await scanner.scanFolders(at: sourceURLs)
+        // Build 90 — his ask: scan everything EXCEPT the media folder Commander is building.
+        // A whole-drive scan of the drive that holds it otherwise finds every file already
+        // filed there and offers to move them into themselves.
+        let skip = mediaLibraryPath.isEmpty ? [] : [URL(fileURLWithPath: mediaLibraryPath)]
+        _ = await scanner.scanFolders(at: sourceURLs, skipping: skip)
         phase = .review
     }
 

@@ -64,17 +64,27 @@ class MediaScanner {
     }
 
     // Scan folder recursively for media files
-    func scanFolder(at url: URL) async -> [URL] {
-        await scanFolders(at: [url])
+    func scanFolder(at url: URL, skipping: [URL] = []) async -> [URL] {
+        await scanFolders(at: [url], skipping: skipping)
     }
 
+    /// Build 90 — his ask: *"can commander scan everything except the designated media library
+    /// commander will be building?"* A whole-drive scan of a drive that already HOLDS the media
+    /// folder otherwise finds everything in it and offers to move it into itself.
+    ///
+    /// ⚠️ The skip is dropped when the scanned folder is itself inside the skipped one, so his
+    /// other case still works: selecting a subtree inside the media folder and sorting it.
+    /// Skipping there would find nothing at all and look broken.
+    private(set) var skippedFolders: [URL] = []
+
     // Scan multiple folders recursively for media files
-    func scanFolders(at urls: [URL]) async -> [URL] {
+    func scanFolders(at urls: [URL], skipping: [URL] = []) async -> [URL] {
         isScanning = true
         foundFiles = []
         foundLibraries = []
         totalSize = 0
         checkedCount = 0
+        skippedFolders = []
         flag.reset()
 
         for url in urls {
@@ -86,13 +96,21 @@ class MediaScanner {
                 foundLibraries.append(url)
                 continue
             }
-            await Self.walk(url, flag: flag) { [weak self] batch in
+            // Only skip what this root actually contains, and never when the root is inside it.
+            let root = url.standardizedFileURL.path
+            let skips = skipping
+                .map { $0.standardizedFileURL.path }
+                .filter { $0 != root && !root.hasPrefix($0 + "/") }
+            await Self.walk(url, flag: flag, skip: Set(skips)) { [weak self] batch in
                 guard let self else { return }
                 self.foundFiles.append(contentsOf: batch.files)
                 self.foundLibraries.append(contentsOf: batch.libraries)
                 self.totalSize += batch.bytes
                 self.checkedCount += batch.checked
                 if !batch.lastPath.isEmpty { self.currentPath = batch.lastPath }
+                for p in batch.skipped where !self.skippedFolders.contains(where: { $0.path == p }) {
+                    self.skippedFolders.append(URL(fileURLWithPath: p))
+                }
             }
         }
 
@@ -106,13 +124,15 @@ class MediaScanner {
         var bytes: Int64 = 0
         var checked = 0
         var lastPath = ""
+        /// Folders left out of the walk on purpose (build 90: the designated media folder).
+        var skipped: [String] = []
     }
 
     /// ⛔ `@concurrent` IS LOAD-BEARING — the same lesson as FileOperationEngine.run().
     /// Without it this runs on the caller's actor, the main one, and the window freezes
     /// for as long as the walk takes.
     @concurrent
-    nonisolated private static func walk(_ root: URL, flag: CancelFlag,
+    nonisolated private static func walk(_ root: URL, flag: CancelFlag, skip: Set<String> = [],
                                          deliver: @escaping @MainActor (Batch) -> Void) async {
         guard let enumerator = FileManager.default.enumerator(
             at: root,
@@ -133,6 +153,11 @@ class MediaScanner {
         while let url = enumerator.nextObject() as? URL {
             if flag.isSet { break }
             if isStartupRoot && enumerator.level == 1 && skipOnStartupDrive.contains(url.path) {
+                enumerator.skipDescendants()
+                continue
+            }
+            if !skip.isEmpty && skip.contains(url.standardizedFileURL.path) {
+                batch.skipped.append(url.standardizedFileURL.path)
                 enumerator.skipDescendants()
                 continue
             }

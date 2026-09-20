@@ -673,3 +673,25 @@ wrong drive is worse than no check.
 **Tested:** `/Volumes` reports 144.93 GB and the media folder 11.51 TB — different filesystems,
 exactly the pair of numbers on his screen — and an unreachable target reports nothing rather
 than a wrong number.
+
+## Build 90 — a scan skips the designated media folder (2026-09-19)
+
+**His ask:** *"i want to maybe scan cold storage for orphaned media and consolidate it to the
+media folder on the cold storage, can commander scan everything except the designated media
+library commander will be building?"*
+
+Until now it could not. A whole-drive scan of the drive that HOLDS the media folder walks that
+folder too, so every file already filed there comes back as something to move into itself — 5,400
+songs on Cold Storage would have been offered straight back.
+
+**Build 90:** the scan leaves out the designated media folder and everything under it, and the
+sheet says so: *"Skipped the designated media folder: Media."* What comes back is the orphans.
+
+⚠️ **The skip is dropped when the scan root is inside the skipped folder** — selecting a subtree
+within the media folder and sorting it is his own earlier case (build 83/84), and skipping there
+would return nothing and look broken. Scanning the media folder itself still works too.
+
+**Tested:** orphans only, with the unskipped scan as the negative control (3 of 6 versus 6 of 6);
+a subtree inside the media folder still scans; the media folder as the root still scans; and a
+sibling named "Media Extra" is NOT caught — the skip is a folder, not a name prefix.
+Regression: t88, t77 and the media suite, ALL PASSED.
