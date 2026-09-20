@@ -335,9 +335,9 @@ private struct FileQuestionView: View {
             if question.mergeEnabled {
                 // Identical pairs can be many thousands (a duplicated folder); the count before
                 // comparing cannot tell how many, so the box is always offered here.
-                Toggle(question.isSameAudio
-                       ? "Do the same for every pair in this bar that holds the same audio"
-                       : "Do the same for every identical pair in this bar", isOn: $applyToAll)
+                Toggle(question.isIdentical || question.isSameAudio
+                       ? "Do the same for every clashing pair in this bar \u{2014} merge the ones that match, keep both when they differ"
+                       : "Do the same for every clashing pair in this bar", isOn: $applyToAll)
             } else if question.remainingLikeThis > 0 {
                 Toggle(applyToAllLabel, isOn: $applyToAll)
             }
@@ -385,11 +385,19 @@ private struct FileQuestionView: View {
                 ? "Same music, different tags. The larger one, from “\(keeper)”, is kept in the target, and the tags from “\(giver)” are written into it, so no tag from either is lost. BOTH sources are deleted, only after the audio is compared again."
                 : "Same music, different tags. One copy lands — the larger of the two, carrying the tags from both. Nothing is deleted: this is a copy."
         }
+        // Build 91 — his rule: Merge is on every pair. When the two differ it keeps both,
+        // because throwing one away is the one thing Merge must never do.
+        if !question.isIdentical && !question.isSameAudio && question.mergeEnabled {
+            let a = question.source.size, b = question.target.size
+            let how = a == b ? "the same size, but their contents differ"
+                             : "\(Fmt.plural(Int(abs(a - b)), "byte")) apart in size"
+            return "These two are different files (\(how)), so there is nothing to merge: BOTH are kept, the second renamed with a number. Nothing is thrown away, and both leave the source on a Move. Show in Finder lets you look at either."
+        }
         guard question.mergeEnabled else {
             let a = question.source.size, b = question.target.size
             let how = a == b ? "the same size, but their contents differ"
                              : "\(Fmt.plural(Int(abs(a - b)), "byte")) apart in size"
-            return "Not available: these two are different files (\(how)). Merge only joins files that hold the same thing — for MP3s, the music itself was compared too, and it differs. Nothing is ever thrown away. Show in Finder lets you look at both."
+            return "Not available: these two are different files (\(how)). Merge only joins files that hold the same thing. Nothing is ever thrown away. Show in Finder lets you look at both."
         }
         if question.kind != .move {
             return "One copy lands in the target. Nothing is deleted — this is a copy."

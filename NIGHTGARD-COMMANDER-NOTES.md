@@ -695,3 +695,32 @@ would return nothing and look broken. Scanning the media folder itself still wor
 a subtree inside the media folder still scans; the media folder as the root still scans; and a
 sibling named "Media Extra" is NOT caught — the skip is a folder, not a name prefix.
 Regression: t88, t77 and the media suite, ALL PASSED.
+
+## Build 91 — Merge is on every pair: merge the same, keep both when they differ (2026-09-19)
+
+**His rule, and it replaces build 81's greyed-out button:**
+***"i want merge available, its not our responsibility"*** ·
+***"if they are the same everything i want to merge but if they are different like this i want
+to keep both"***
+
+**One button, one decision.** Merge is live on every pair of files:
+- **Identical** (bytes, or build 88's same-audio): one copy lands, both sources are deleted.
+- **Different:** BOTH are kept, the second renamed with a number, and both still leave the
+  source on a Move. **Nothing is thrown away** — the one thing Merge must never do.
+
+**And one tick covers the whole bar.** A Merge answered with "do the same" is remembered for
+identical AND differing pairs, so a bar of thousands takes a single answer. Before this, the two
+kinds were separate questions with separate boxes.
+
+⭐ **Why "keep both" is the right default for a pair that differs, in his own evidence:** two
+files named `2020-09-27 20.11.20.7270.jpg`, 296 KB and 47 KB — ***"they are two different
+pictures, one is ohms law and the other is a baby picture."*** Camera and export naming collide
+across folders, so a same-name pair can be completely unrelated. **Any rule that picks a side
+would have deleted the baby picture.**
+
+**Also fixed:** the greyed-out text from build 88 claimed "for MP3s, the music itself was
+compared too" on pairs of photos. It now says only what applies.
+
+**Tested:** Merge enabled on a differing pair; Merge keeps both there, contents of both intact,
+both leaving the source; ONE ticked answer merges two identical pairs and keeps both of a
+differing pair in the same bar, leaving the source empty; a lone identical pair still merges.

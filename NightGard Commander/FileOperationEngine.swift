@@ -631,7 +631,13 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
             // Build 88 — his: "it becomes, mergge all meta data". Same music in two files that
             // differ only by their tags merges too: the larger one (the one carrying the extra
             // metadata) is kept, the smaller one's tags are folded into it, both sources go.
-            let mergeOK = bothFiles && (identical || sameAudio)
+            // Build 91 — his rule, and it replaces the greyed-out button: *"i want merge
+            // available, its not our responsibility … if they are the same everything i want
+            // to merge but if they are different like this i want to keep both."*
+            // Merge is LIVE on every pair of files. Identical (or same-audio) pairs merge;
+            // a pair that differs keeps both, which is the outcome that loses nothing. One
+            // answer, one apply-to-all, covers a bar of thousands.
+            let mergeOK = bothFiles
             let replaceOK = onMove && !identical
             // Build 85 — his: "keep both and replace were not both there". Offered for a library
             // photo too; for one it means "do not bring this one in", and it stays in its library.
@@ -667,7 +673,16 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
                 let answer = await delegate.askFile(question)
                 choice = answer.choice
                 if answer.applyToAll {
-                    if identical || sameAudio { flattenForAllIdentical = answer.choice } else { flattenForAll = answer.choice }
+                    if answer.choice == .merge {
+                        // Build 91: "merge when the same, keep both when different" is ONE
+                        // rule, so it is remembered for both kinds of pair in this bar.
+                        flattenForAllIdentical = .merge
+                        flattenForAll = .merge
+                    } else if identical || sameAudio {
+                        flattenForAllIdentical = answer.choice
+                    } else {
+                        flattenForAll = answer.choice
+                    }
                 }
             }
             let owner = fromSibling ? incoming : nil
@@ -676,6 +691,12 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
                 throw FileOpCancelled()
             case .keepBoth:
                 dst = uniqueName(for: dst, claimant: src)
+            case .merge where !identical && !sameAudio:
+                // They differ: keeping both is what "merge" has to mean here, because
+                // throwing one away is the one thing it must never do.
+                dst = uniqueName(for: dst, claimant: src)
+                summary.notes.append(.init(path: src.path,
+                    reason: "Kept both: this \u{201C}\(name)\u{201D} and the other one are different files, so nothing was merged and nothing was thrown away."))
             case .merge:
                 if srcMoves {
                     ops.append(.retire(src: src, landedAt: dst, match: sameAudio ? .audioTwin : .bytes, owner: owner))
