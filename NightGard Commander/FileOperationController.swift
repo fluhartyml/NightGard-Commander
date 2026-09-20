@@ -80,9 +80,54 @@ final class FileOperationController {
 
     /// `title`, `group` and `sharedTargets` are for bars started together from one scan
     /// (build 76): each is named after its folder, and they share one name registry.
+    /// Build 99 — his choice, 2026-09-19: *"user can choose three parallel or one series"*,
+    /// after watching the bars share one network link: *"at the moment im doing one at a time
+    /// because the status bar on one moves faster."*
+    ///
+    /// **He is right about the bar and right to ask.** The link to Cold Storage is the limit,
+    /// so bars running together split it — measured at ~3.5 MB/s between three. The total time
+    /// is much the same, but one at a time means less contention, fewer part-written files if
+    /// he stops, and a bar that visibly moves. → `feedback_progress_must_prove_it_is_alive`
+    var runOneAtATime = false
+    /// Bars from a scan that have not been started yet, oldest first.
+    private var queuedStarts: [(group: UUID, run: () -> Void)] = []
+    /// Shown on the bars' footer so a waiting folder is never mistaken for a lost one.
+    var queuedCount: Int { queuedStarts.count }
+
     func start(_ kind: FileOpKind, sources: [URL], target: URL, mode: FileOpMode = .standard,
                title: String? = nil, group: UUID? = nil, sharedTargets: TargetClaims? = nil,
                onFinish: ((FileOpSummary) -> Void)? = nil) {
+        guard !sources.isEmpty else { return }
+        // One at a time: the first bar of a scan runs, the rest wait their turn.
+        if runOneAtATime, let group, jobs.contains(where: { $0.group == group }) || queuedStarts.contains(where: { $0.group == group }) {
+            queuedStarts.append((group, { [weak self] in
+                self?.startNow(kind, sources: sources, target: target, mode: mode,
+                               title: title, group: group, sharedTargets: sharedTargets, onFinish: onFinish)
+            }))
+            return
+        }
+        startNow(kind, sources: sources, target: target, mode: mode,
+                 title: title, group: group, sharedTargets: sharedTargets, onFinish: onFinish)
+    }
+
+    /// Start the next waiting bar, if its scan has none running.
+    private func startNextQueued() {
+        guard !queuedStarts.isEmpty else { return }
+        let running = Set(jobs.compactMap(\.group))
+        guard let i = queuedStarts.firstIndex(where: { !running.contains($0.group) }) else { return }
+        let next = queuedStarts.remove(at: i)
+        next.run()
+    }
+
+    /// Nothing from this scan will run: he cancelled it. ⛔ Queued bars must go too, or a
+    /// Cancel All would be followed by the next folder starting itself.
+    func dropQueued(of group: UUID) {
+        queuedStarts.removeAll { $0.group == group }
+    }
+
+    private func startNow(_ kind: FileOpKind, sources: [URL], target: URL, mode: FileOpMode = .standard,
+                          title: String? = nil, group: UUID? = nil, sharedTargets: TargetClaims? = nil,
+                          onFinish: ((FileOpSummary) -> Void)? = nil) {
         guard !sources.isEmpty else { return }
         let footprint = Self.footprint(sources: sources, target: target, mode: mode)
         if let refusal = refusal(for: footprint, kind: kind, group: group) {
@@ -186,6 +231,8 @@ final class FileOperationController {
             self.withdrawQuestions(of: job)
             self.jobs.removeAll { $0 === job }
             self.onDiskChanged?()
+            // Build 99: the next folder of this scan begins as this one ends.
+            self.startNextQueued()
             job.onFinish?(summary)
             job.onFinish = nil
             let nothingToSay = job.stoppedBySibling && summary.filesTransferred == 0 && summary.failed.isEmpty
@@ -295,6 +342,9 @@ final class FileOperationController {
     /// the line and never come up; then the asking bar gets its Cancel.
     private func stopSiblings(of job: FileOperationJob?) {
         guard let job, let group = job.group else { return }
+        // Build 99: ⛔ a Cancel All must also drop the folders still WAITING their turn, or
+        // the next one would start itself the moment this bar ends — "full stop" would not be.
+        dropQueued(of: group)
         for other in jobs where other !== job && other.group == group {
             other.stoppedBySibling = true
             other.cancel()

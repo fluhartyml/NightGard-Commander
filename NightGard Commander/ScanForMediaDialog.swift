@@ -61,6 +61,8 @@ struct ScanForMediaDialog: View {
     @State private var errorMessage: String?
     @State private var showErrorAlert = false
     @State private var destinationPath: String
+    /// Build 99 — his ask: *"user can choose three parallel or one series"*.
+    @State private var runBarsOneAtATime = false
 
     /// The media library designated in Settings, offered as a one-click destination.
     /// Read live rather than captured at init, so designating one while this dialog
@@ -434,6 +436,21 @@ struct ScanForMediaDialog: View {
                     }
                 }
 
+                // Build 99 — his ask: "user can choose three parallel or one series".
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Run the folders:")
+                        .font(.subheadline).fontWeight(.semibold)
+                    Picker("Run the folders", selection: $runBarsOneAtATime) {
+                        Text("All at once — one bar each, sharing the drive").tag(false)
+                        Text("One at a time — each folder waits its turn").tag(true)
+                    }
+                    .pickerStyle(.radioGroup)
+                    .labelsHidden()
+                    Text("They share one connection either way, so the total time is much the same. One at a time moves each bar faster and leaves less half-done if you stop.")
+                        .font(.caption).foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
                 // Destination folder picker.
                 // Hidden for the two designated-folder actions: those name their
                 // destination in the action itself, so offering a second, editable
@@ -610,6 +627,8 @@ struct ScanForMediaDialog: View {
             let libraries = Set(typeLibraries.map { $0.standardizedFileURL.path })
             let group = UUID()
             let claims = TargetClaims()
+            // Build 99 — his choice: all the bars at once, or one at a time down one link.
+            fileOps.runOneAtATime = runBarsOneAtATime
             let target = URL(fileURLWithPath: destinationPath)
             for part in MediaPlan.groups(of: typeLibraries + typeFiles, roots: roots) {
                 let libs = part.sources.filter { libraries.contains($0.standardizedFileURL.path) }

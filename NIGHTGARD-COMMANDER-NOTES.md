@@ -902,3 +902,26 @@ than what is already planned, it is left off rather than shown wrong.
 
 **Tested** in the 700-file chunked run: the bar reports its whole share of 700 from the start,
 and what is done never exceeds it.
+
+## Build 99 — all at once, or one at a time (2026-09-19)
+
+**His ask:** *"yes please do 99 user can choose three parallel or one series"* — after watching
+his own bars: ***"at the moment im doing one at a time because the status bar on one moves
+faster."***
+
+**He is right about what he saw, and it is worth stating plainly:** the link to Cold Storage is
+the limit, not the Mac. Three bars measured **~3.5 MB/s between them**; one bar gets the lot. The
+**total time is much the same**, so this is not a speed setting — it is a choice between one bar
+that visibly moves and three that crawl.
+
+**The scan sheet now asks:**
+- **All at once** — one bar per top-level folder, sharing the drive (build 76's behaviour, still
+  the default).
+- **One at a time** — each folder waits its turn and starts as the one before it ends.
+
+⛔ **Cancel All clears the folders still waiting**, or "full stop" would be followed by the next
+one starting itself. Two different scans never block each other — the queue is per scan.
+
+**Tested:** all-at-once starts every folder; one-at-a-time starts only the first and keeps the
+rest (not loses them); each begins in order as the last ends; a Cancel All stops anything further
+from starting; and two scans run one bar each.
