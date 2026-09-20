@@ -797,3 +797,32 @@ quicker than QuickLook, which hands back a document ICON for anything it cannot 
 
 ⭐ **The lesson, and it is not about thumbnails:** work attached to a view runs only if that view
 exists. An empty placeholder is not a cosmetic choice; **it is what makes the loading happen.**
+
+## Build 95 — planning and moving in chunks (2026-09-19)
+
+**His ask:** *"can it di it in chunks? instead of spending hours checking first"* — and the
+clarification that shaped it: ***"youve already asked instructions to merge or keep both, so i
+mean after the questions and answers you already have the parmeters but it does chunks when
+executing."***
+
+**Before:** a bar checked EVERY file, asked every question, and only then moved anything. On the
+Raid that is 30,000+ files of checking before the first byte lands — and every Stop and Run threw
+the whole pass away.
+
+**Now:** every **300 planned steps** the plan so far is executed and planning carries on. Files
+start arriving in seconds. **The questions are unchanged** — each is still asked before its own
+file moves, and an answer given "for this bar" carries across every chunk.
+
+⛔ **Retires wait for the end, and that is load-bearing.** A retire deletes a source once its twin
+has landed (build 77). Run inside a chunk whose twin is planned in a LATER chunk, it would find
+nothing there and leave the file behind. They are held back and run in the final pass.
+
+⚠️ **The totals grow as later chunks are planned** — `filesTotal` and `bytesTotal` are added to,
+never replaced — so the bar's total is an estimate until the last chunk is planned.
+
+**Tested** with 700 files in one Move (300 unique, 100 identical pairs, 100 differing pairs),
+which is more than two chunks: 600 files land (300 + 100 merged + 200 kept), the source is left
+empty, every file's contents are intact, twins merged to one, differing pairs kept both — and
+⭐ **the run proved files were already moving while later questions were still being asked.**
+A small single-chunk run of the same shapes gives the identical result. Regression: t88, t91, the
+media suite and the 73-check engine suite Mac→Raid, ALL PASSED.

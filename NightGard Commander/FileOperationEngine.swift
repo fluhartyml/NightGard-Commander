@@ -868,6 +868,12 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
             let move = kind == .move && !forceCopy && MoveGuard.reason(item.src) == nil
             ops.append(.extract(src: item.src, dst: dst, move: move,
                                 format: item.convert ? format : .original, date: item.date, size: s.size))
+            // Build 95: a library of 30,000 photos starts arriving straight away.
+            // ⚠️ `sharedClaims` is written back by the defer above, so the chunk must see the
+            // claims made so far — it does: `claimed` is the same dictionary the flush reads
+            // through `uniqueName`, and nothing in a chunk changes which name a later file
+            // was promised.
+            try await flushChunk()
         }
     }
 
@@ -1038,6 +1044,7 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
                                                         remaining: &remaining, claimed: &claimed, in: folder,
                                                         srcMoves: move) else { continue }
             try addNew(src: src, dst: dst, facts: s, move: move)
+            try await flushChunk()
         }
         if alreadyHome > 0 {
             summary.notes.append(.init(path: targetDir.path,
@@ -1150,11 +1157,44 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
 
     // MARK: - Phase 2: do it
 
-    private func execute() async throws {
+    /// Build 95 — his ask: *"can it di it in chunks? instead of spending hours checking
+    /// first"* · *"youve already asked instructions to merge or keep both … but it does
+    /// chunks when executing"*.
+    ///
+    /// Planning no longer has to finish before anything moves. Every `chunkSize` steps the
+    /// plan is executed and the planning goes on, so files start arriving in seconds instead
+    /// of after a whole drive has been checked. **The questions are unchanged** — each one is
+    /// still asked before its own file moves, and an answer given "for this bar" carries
+    /// across the chunks.
+    ///
+    /// ⛔ **Retires are the exception and they wait for the end.** A retire deletes a source
+    /// once its twin has landed (build 77); if it ran inside a chunk whose twin is planned in
+    /// a LATER chunk, it would find nothing there and leave the file behind. They are held
+    /// back and run in the final pass.
+    private let chunkSize = 300
+    private var pendingRetires: [Op] = []
+    private var startedTransferring = false
+
+    /// Run the plan so far, if it has grown past a chunk, and carry on planning.
+    private func flushChunk() async throws {
+        guard ops.count >= chunkSize else { return }
+        try await execute(final: false)
+        progress.phase = .checking
+        await report(force: true)
+    }
+
+    private func execute(final: Bool = true) async throws {
         // Build 77: a file only leaves the source after the one kept in its place has landed,
         // so every retire step goes last.
         let isRetire: (Op) -> Bool = { if case .retire = $0 { return true }; return false }
-        ops = ops.filter { !isRetire($0) } + ops.filter(isRetire)
+        if final {
+            ops = ops.filter { !isRetire($0) } + pendingRetires + ops.filter(isRetire)
+            pendingRetires = []
+        } else {
+            pendingRetires += ops.filter(isRetire)
+            ops = ops.filter { !isRetire($0) }
+        }
+        guard !ops.isEmpty else { return }
         var files = 0
         var bytes: Int64 = 0
         for op in ops {
@@ -1176,9 +1216,12 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
         planFolderProgress()
 
         progress.phase = .transferring
-        progress.filesTotal = files
-        progress.bytesTotal = bytes
-        runningSince = Date()
+        // Build 95: the totals GROW as later chunks are planned, so they are added to, never
+        // replaced. ⚠️ That makes the total an estimate until the last chunk is planned —
+        // said plainly rather than shown as a total that silently shrinks the percentage.
+        progress.filesTotal += files
+        progress.bytesTotal += bytes
+        if !startedTransferring { runningSince = Date(); startedTransferring = true }
         await report(force: true)
 
         for op in ops {
@@ -1217,6 +1260,7 @@ nonisolated final class FileOperationEngine: @unchecked Sendable {
             }
             saveLogIfDue()
         }
+        ops = []
     }
 
     // MARK: - Plan 8.2: the whole folder tree first
