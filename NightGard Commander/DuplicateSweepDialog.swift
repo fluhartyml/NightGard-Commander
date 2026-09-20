@@ -64,6 +64,8 @@ struct DuplicateSweepDialog: View {
         }
         .padding(20)
         .frame(width: 720, height: 620)
+        .onAppear { fileOps?.anotherSheetIsUp = true }
+        .onDisappear { fileOps?.anotherSheetIsUp = false }
         .task {
             guard !started else { return }
             started = true

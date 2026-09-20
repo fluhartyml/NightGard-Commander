@@ -826,3 +826,35 @@ empty, every file's contents are intact, twins merged to one, differing pairs ke
 ⭐ **the run proved files were already moving while later questions were still being asked.**
 A small single-chunk run of the same shapes gives the identical result. Regression: t88, t91, the
 media suite and the 73-check engine suite Mac→Raid, ALL PASSED.
+
+## Build 96 — the governor cried wolf, and the ghost sheet (2026-09-19)
+
+### 1. ⛔ Both bars paused with the Mac at 41% free
+His screen, 21:3x: *"System unstable — memory is running low. Paused until it is stable again"*
+on both bars. **Measured at that moment: 41% of memory free**, Commander itself holding 1.7 GB.
+
+**The cause is not the threshold, it is the event.** macOS raises a memory-pressure **warning**
+routinely during sustained file I/O — which is exactly what a Move IS. Build 76 paused on the
+first warning, so the work stopped the moment it got going, and he had to press *Resume at Your
+Own Risk* to continue. ⚠️ **A guard that fires on the normal case teaches you to overrule it,
+which is worse than not having it.**
+
+**Now:** `.critical` pauses at once, as before. A `.warning` must **hold for 30 seconds**, and
+the clock restarts each time it clears, so flapping never accumulates into a pause. The bar then
+says how long it has been low, not just "low".
+
+### 2. 👻 The empty sheet after Cancel
+His report: *"theres a ghost after i pressed cancel on the first progress bar"* — a large empty
+panel with no text and no buttons, twice.
+
+**Cause: two sheets on one window.** A bar's summary was presented while the Scan for Media sheet
+already owned the window, and macOS renders the second as an empty box. **It was never a drawing
+fault; the content was there, on a sheet that could not be shown.**
+
+**Now** the scan sheet and the duplicate sweep declare themselves while they are up, and anything
+a job wants to say waits in the queue that already holds one bar's question behind another's —
+then opens as soon as the window is free.
+
+**Tested:** the memory rule — a brief warning never pauses, a cleared-and-renewed warning is
+judged from its own start, a warning held 30 s does pause, critical pauses on the first tick, and
+recovery clears it.

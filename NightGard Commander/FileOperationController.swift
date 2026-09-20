@@ -235,14 +235,34 @@ final class FileOperationController {
     // MARK: - One prompt on screen at a time
 
     /// Put a prompt on screen, or in line behind the one already there.
+    /// Build 96 — ⛔ **one sheet per window, always.** His report: *"theres a ghost after i
+    /// pressed cancel on the first progress bar"* — a large empty panel over the window. A
+    /// question or summary was being presented while the Scan for Media sheet already owned
+    /// the window, and macOS shows the second one as an empty box: no content, no buttons,
+    /// nothing to dismiss it with.
+    ///
+    /// The scan sheet sets this while it is up, and anything the jobs want to say waits in
+    /// the same queue that already holds one bar's question behind another's.
+    var anotherSheetIsUp = false {
+        didSet { if !anotherSheetIsUp { presentNextIfFree() } }
+    }
+
     func show(_ prompt: Prompt, for job: FileOperationJob?) {
         let p = Presented(prompt: prompt, job: job)
-        if current == nil {
+        if current == nil && !anotherSheetIsUp {
             current = p
             presented = p
         } else {
             waiting.append(p)
         }
+    }
+
+    /// Put the next queued prompt on screen, if nothing else holds the window.
+    private func presentNextIfFree() {
+        guard current == nil, !anotherSheetIsUp, !waiting.isEmpty else { return }
+        let next = waiting.removeFirst()
+        current = next
+        presented = next
     }
 
     /// A cancelled or finished job's questions leave the line; the others keep their places.
@@ -260,10 +280,7 @@ final class FileOperationController {
         presented = nil
         guard !waiting.isEmpty else { return }
         Task { @MainActor [weak self] in
-            guard let self, self.current == nil, !self.waiting.isEmpty else { return }
-            let next = self.waiting.removeFirst()
-            self.current = next
-            self.presented = next
+            self?.presentNextIfFree()
         }
     }
 

@@ -57,6 +57,11 @@ final class JobGovernor {
     @ObservationIgnored var injectedForTest: [Condition] = []
 
     @ObservationIgnored private var memoryLevel: DispatchSource.MemoryPressureEvent = .normal
+    /// Build 96: when the current memory WARNING began. A warning that clears before the grace
+    /// period never pauses anything.
+    @ObservationIgnored private var warningSince: Date?
+    /// How long a memory warning must hold before it counts as unstable.
+    static let memoryWarningGrace: TimeInterval = 30
     @ObservationIgnored private var memorySource: DispatchSourceMemoryPressure?
     @ObservationIgnored private var timer: Timer?
     @ObservationIgnored private var diskConditions: [Condition] = []
@@ -113,8 +118,24 @@ final class JobGovernor {
         if ticks % 3 == 1 { checkDisks(jobs) }
 
         var now: [Condition] = []
-        if memoryLevel.contains(.warning) || memoryLevel.contains(.critical) {
-            now.append(Condition(key: "memory", text: "memory is running low", volume: nil))
+        // ⛔ Build 96 — a WARNING alone is not a reason to stop. His screen, 2026-09-19: both
+        // bars paused saying "memory is running low" while the Mac had **41% free** and
+        // Commander itself held 1.7 GB. macOS raises a memory-pressure warning routinely under
+        // sustained file I/O — which is precisely what a Move IS — so pausing on the first
+        // warning stops the very work that caused it, every time.
+        //
+        // **Critical still pauses at once.** A warning has to HOLD for 30 seconds first.
+        if memoryLevel.contains(.critical) {
+            warningSince = nil
+            now.append(Condition(key: "memory", text: "memory is critically low", volume: nil))
+        } else if memoryLevel.contains(.warning) {
+            let since = warningSince ?? Date()
+            warningSince = since
+            if Date().timeIntervalSince(since) >= Self.memoryWarningGrace {
+                now.append(Condition(key: "memory", text: "memory has been low for \(Int(Date().timeIntervalSince(since))) seconds", volume: nil))
+            }
+        } else {
+            warningSince = nil
         }
         switch ProcessInfo.processInfo.thermalState {
         case .serious, .critical:

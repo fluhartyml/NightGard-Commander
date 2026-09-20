@@ -183,6 +183,10 @@ struct ScanForMediaDialog: View {
         }
         .padding(20)
         .frame(width: 600, height: 700)
+        // Build 96: while this sheet owns the window, a job's question or summary waits
+        // rather than opening a second sheet that macOS renders as an empty ghost.
+        .onAppear { fileOps?.anotherSheetIsUp = true }
+        .onDisappear { fileOps?.anotherSheetIsUp = false }
         .task {
             await startScanning()
         }
