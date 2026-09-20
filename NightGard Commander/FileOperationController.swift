@@ -94,10 +94,19 @@ final class FileOperationController {
     /// Shown on the bars' footer so a waiting folder is never mistaken for a lost one.
     var queuedCount: Int { queuedStarts.count }
 
+    /// Build 100: how many bars each scan handed out, and how many have finished — so a
+    /// summary can say "1 of 3" instead of speaking for the whole scan. Counted in `start`,
+    /// where every bar of a scan passes exactly once whether it runs now or waits its turn.
+    private var barsPerGroup: [UUID: Int] = [:]
+    private var barsFinishedPerGroup: [UUID: Int] = [:]
+
     func start(_ kind: FileOpKind, sources: [URL], target: URL, mode: FileOpMode = .standard,
                title: String? = nil, group: UUID? = nil, sharedTargets: TargetClaims? = nil,
                onFinish: ((FileOpSummary) -> Void)? = nil) {
         guard !sources.isEmpty else { return }
+        // Build 100: count this bar into its scan before it runs or queues, so "1 of 3" is
+        // the scan's own figure and not a count of whatever happens to be running.
+        if let group { barsPerGroup[group, default: 0] += 1 }
         // One at a time: the first bar of a scan runs, the rest wait their turn.
         if runOneAtATime, let group, jobs.contains(where: { $0.group == group }) || queuedStarts.contains(where: { $0.group == group }) {
             queuedStarts.append((group, { [weak self] in
@@ -122,6 +131,8 @@ final class FileOperationController {
     /// Nothing from this scan will run: he cancelled it. ⛔ Queued bars must go too, or a
     /// Cancel All would be followed by the next folder starting itself.
     func dropQueued(of group: UUID) {
+        let dropped = queuedStarts.filter { $0.group == group }.count
+        if dropped > 0 { barsPerGroup[group] = max(0, (barsPerGroup[group] ?? dropped) - dropped) }
         queuedStarts.removeAll { $0.group == group }
     }
 
@@ -131,6 +142,8 @@ final class FileOperationController {
         guard !sources.isEmpty else { return }
         let footprint = Self.footprint(sources: sources, target: target, mode: mode)
         if let refusal = refusal(for: footprint, kind: kind, group: group) {
+            // A refused bar never runs, so it is not one of the scan's "3" either.
+            if let group { barsPerGroup[group] = max(0, (barsPerGroup[group] ?? 1) - 1) }
             show(.summary(refusal), for: nil)
             return
         }
@@ -230,6 +243,22 @@ final class FileOperationController {
             }
             self.withdrawQuestions(of: job)
             self.jobs.removeAll { $0 === job }
+            // Build 100: say WHICH bar this is and where it came in. Counted after the job
+            // leaves `jobs`, so "still going" is the honest remainder, queued bars included.
+            summary.barName = job.title
+            if let group = job.group {
+                let done = (self.barsFinishedPerGroup[group] ?? 0) + 1
+                self.barsFinishedPerGroup[group] = done
+                let total = max(self.barsPerGroup[group] ?? done, done)
+                summary.barsDone = done
+                summary.barsTotal = total
+                summary.barsLeft = self.jobs.filter { $0.group == group }.count
+                             + self.queuedStarts.filter { $0.group == group }.count
+                if summary.barsLeft == 0 {
+                    self.barsPerGroup[group] = nil
+                    self.barsFinishedPerGroup[group] = nil
+                }
+            }
             self.onDiskChanged?()
             // Build 99: the next folder of this scan begins as this one ends.
             self.startNextQueued()

@@ -479,6 +479,16 @@ nonisolated struct FileOpSummary: Sendable {
     /// was moved?" The popup said "15 items moved" and nothing else.
     var sources: [String] = []
     var target: String?
+    /// Build 100 — the folder this bar was working on ("Media", "Backup"), and where it came
+    /// in among the bars of its scan. His question, 2026-09-19, with two bars still moving:
+    /// *"why did this popup saying move finished if its still moving?"* — then the instruction:
+    /// ***"or is one of three finished? it should say so instead of lying."*** The summary has
+    /// always been per BAR; the title spoke for the whole scan. Nil for an ordinary copy or move.
+    var barName: String?
+    var barsDone: Int?
+    var barsTotal: Int?
+    /// Bars of the same scan still running or still waiting their turn when this one ended.
+    var barsLeft = 0
 }
 
 /// One line of the operation log. Written to disk so a whole Move can be undone later —

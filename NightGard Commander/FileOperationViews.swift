@@ -739,6 +739,10 @@ private struct SummaryView: View {
             Text(title).font(.title2).bold()
             Text(headline).font(.title3)
                 .fixedSize(horizontal: false, vertical: true)  // it was cut off at "was lef…" (2026-09-18)
+            if let stillGoing {
+                Text(stillGoing).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             // A delete names exactly what was selected and where it was.
             if summary.kind == .delete, !summary.sources.isEmpty {
                 Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 10, verticalSpacing: 4) {
@@ -815,7 +819,22 @@ private struct SummaryView: View {
 
     private var title: String {
         if summary.wasUndo { return summary.cancelled ? "Undo stopped" : "Undo finished" }
-        return summary.cancelled ? "\(summary.kind.verb) cancelled" : "\(summary.kind.verb) finished"
+        let what = summary.cancelled ? "\(summary.kind.verb) cancelled" : "\(summary.kind.verb) finished"
+        // Build 100: one bar of a scan speaks for itself, never for the others. His words,
+        // 2026-09-19: "or is one of three finished? it should say so instead of lying."
+        guard let bar = summary.barName else { return what }
+        if let done = summary.barsDone, let total = summary.barsTotal, total > 1 {
+            return "\(bar) — \(what) (\(done) of \(total))"
+        }
+        return "\(bar) — \(what)"
+    }
+
+    /// Build 100: the sentence that stops "finished" reading as "all done".
+    private var stillGoing: String? {
+        guard summary.barsLeft > 0 else { return nil }
+        return summary.barsLeft == 1
+            ? "One more folder from this scan is still going."
+            : "\(Fmt.plural(summary.barsLeft, "folder")) from this scan are still going."
     }
 
     private var headline: String {
