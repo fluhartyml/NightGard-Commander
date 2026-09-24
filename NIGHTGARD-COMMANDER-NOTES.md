@@ -172,6 +172,44 @@ do gets one, stored in the same `UserDefaults`.
 
 ---
 
+## ⬜ PLANNED — Video Normalize (his, 2026-09-24 ~13:5x). NOT BUILT.
+
+**The ask:** *"add a video normalize feature to commander roadmap."* Context: HandBrake is re-encoding his whole
+video backup into `/Volumes/Lexar 3 TB/Video Convert/`, and *"i am going to have to use commander to organize the
+video files."*
+
+**What "normalize" means for music today** (sections 1–4 above): Shazam + iTunes identify each song, tags are
+written, the file is renamed to the format (`Artist - Title - Album`) and filed into the designated music library.
+**That pass is music-only.**
+
+**What already exists for video:** the scanner counts every video container (build 86); **Organization → Video/
+then Resolution then Codec** sorts into `Video/1080p/H.264/…` (build 87, `VideoProbe.swift`); Find Duplicate Media
+and Flatten/Move work on video. **Missing: identifying a video, naming it to a format, and writing its tags.**
+
+✅ **His direction, 2026-09-24 ~14:0x:** ***"my focus is the music videos first. i was thinking of using itunes to mine
+for missing metadata and staying clear of shazam for video"***
+- **Scope first: MUSIC VIDEOS.** Other video (TV, YouTube channels, movies) comes later.
+- **Metadata source: iTunes.** The iTunes Search API has a music-video search (`media=musicVideo`), and Commander
+  already has `iTunesSearchService.swift` for the music pass.
+- ⛔ **No Shazam for video.**
+- Found 2026-09-24: sampled files (source + HandBrake output) carry **no descriptive tags at all** — only encoder/date.
+  **The filename and folder are the only identity to search from.**
+
+- **Later phase (movies / TV), his pointer:** *"imdm can also be used from what ive seen on other open source projects"*
+  — i.e. how **Kodi (ex-XBMC)** and **Infuse** do it. Both lean mainly on **TMDB** (free API, carries IMDb IDs);
+  IMDb itself has no free public API. Not for the music-video phase.
+- **His movies:** *"i do have movies in my media library, most are public domain from the 30's and 50's."*
+  Sources for that phase: TMDB covers most of those titles; the **Internet Archive** (archive.org) hosts many
+  public-domain films with a free metadata API — likely where many of his copies came from.
+
+⬜ **Open — ask him before designing anything:**
+- What a normalized video name looks like (and whether it's editable, like the music format blocks).
+- Where identification comes from, if anywhere — the file's own tags/folder names only, or an online lookup.
+- Whether it files into a designated video library the way music does.
+- A CLI verb to match, per the rule at the top of this file.
+
+---
+
 ## 🔀 MOVE / COPY COLLISIONS — his spec, 2026-09-18 07:3x–07:5x. NOT BUILT YET.
 
 **Found first:** multi-select Move (⌘6) exists, but `moveSelectedToOtherPane()` calls
