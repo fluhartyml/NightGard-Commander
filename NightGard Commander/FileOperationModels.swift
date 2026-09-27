@@ -512,6 +512,33 @@ nonisolated struct FileOpSummary: Sendable {
     var barsTotal: Int?
     /// Bars of the same scan still running or still waiting their turn when this one ended.
     var barsLeft = 0
+
+    /// Build 107 — the only kind of summary "Don't tell me again" may silence: it ran to the
+    /// end and nothing needs him. A failure, a skip, a name clash or a cancel always shows.
+    var isRoutine: Bool {
+        !cancelled && !wasUndo && failed.isEmpty && skipped.isEmpty && quarantined.isEmpty
+    }
+}
+
+/// Build 107 — his ask, 2026-09-27, looking at a "Delete finished" sheet for one file:
+/// *"it needs a check box 'dont tell me again'"*. Remembered per kind, so silencing Delete
+/// does not silence Move. Operations › Show Finished Summaries Again turns them all back on.
+nonisolated enum QuietSummaries {
+    private static func key(_ kind: FileOpKind) -> String { "quietSummary.\(kind.rawValue)" }
+
+    static func isQuiet(_ kind: FileOpKind) -> Bool {
+        UserDefaults.standard.bool(forKey: key(kind))
+    }
+
+    static func silence(_ kind: FileOpKind) {
+        UserDefaults.standard.set(true, forKey: key(kind))
+    }
+
+    static func showAllAgain() {
+        for kind in [FileOpKind.copy, .move, .delete] {
+            UserDefaults.standard.removeObject(forKey: key(kind))
+        }
+    }
 }
 
 /// One line of the operation log. Written to disk so a whole Move can be undone later —

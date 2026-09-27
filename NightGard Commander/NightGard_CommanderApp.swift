@@ -78,6 +78,11 @@ struct NightGard_CommanderApp: App {
                     NotificationCenter.default.post(name: .findDuplicates, object: nil)
                 }
                 .keyboardShortcut("7", modifiers: [.command, .option])
+                Divider()
+                // Build 107 — undoes every "Don't tell me again" ticked on a summary.
+                Button("Show Finished Summaries Again") {
+                    QuietSummaries.showAllAgain()
+                }
             }
 
             CommandGroup(replacing: .appSettings) {

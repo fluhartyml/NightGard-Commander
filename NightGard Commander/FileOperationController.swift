@@ -321,7 +321,10 @@ final class FileOperationController {
             job.onFinish?(summary)
             job.onFinish = nil
             let nothingToSay = job.stoppedBySibling && summary.filesTransferred == 0 && summary.failed.isEmpty
-            if !nothingToSay { self.show(.summary(summary), for: nil) }
+            // Build 107: he ticked "Don't tell me again" for this kind — only a routine
+            // finish is skipped; anything that went wrong still comes up.
+            let silenced = summary.isRoutine && QuietSummaries.isQuiet(summary.kind)
+            if !nothingToSay && !silenced { self.show(.summary(summary), for: nil) }
         }
     }
 

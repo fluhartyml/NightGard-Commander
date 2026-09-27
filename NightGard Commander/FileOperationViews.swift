@@ -752,6 +752,7 @@ private struct ExtractOptionsView: View {
 private struct SummaryView: View {
     let summary: FileOpSummary
     let controller: FileOperationController
+    @State private var dontTellAgain = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -852,8 +853,17 @@ private struct SummaryView: View {
                     }
                     .controlSize(.large)
                 }
+                // Build 107 — offered only when nothing needs him, so it can never hide a failure.
+                if summary.isRoutine {
+                    Toggle("Don’t tell me again after a \(summary.kind.verb)", isOn: $dontTellAgain)
+                        .toggleStyle(.checkbox)
+                        .help("Turn these back on with Operations › Show Finished Summaries Again. Anything that fails or is skipped still shows.")
+                }
                 Spacer()
-                Button("Done") { controller.dismissSummary() }
+                Button("Done") {
+                    if dontTellAgain { QuietSummaries.silence(summary.kind) }
+                    controller.dismissSummary()
+                }
                     .keyboardShortcut(.defaultAction)
                     .controlSize(.large)
             }
