@@ -633,6 +633,12 @@ struct FileBrowserPanel: View {
                                     }
                                 }
                             }
+
+                            // Build 108 — a full folder has no empty space to right-click.
+                            Divider()
+                            Button("New Folder") {
+                                startCreatingFolder()
+                            }
                         } else if let itemID = selectedItems.first,
                                   let item = fileSystem.files.first(where: { $0.id == itemID }) {
                             Button("Show in Finder") {
@@ -690,6 +696,12 @@ struct FileBrowserPanel: View {
                                 Button("Add to Playlist") {
                                     addAction(item)
                                 }
+                            }
+
+                            // Build 108 — a full folder has no empty space to right-click.
+                            Divider()
+                            Button("New Folder") {
+                                startCreatingFolder()
                             }
                         } else {
                             Button("Show This Folder in Finder") {
@@ -980,6 +992,10 @@ struct FileBrowserPanel: View {
         }
         .onAppear {
             fileSystem.loadFiles()
+        }
+        // Build 108 — ⌘7 / New on the bottom bar. Only the focused pane answers.
+        .onReceive(NotificationCenter.default.publisher(for: .newFolderInFocusedPane)) { _ in
+            if isFocused { startCreatingFolder() }
         }
         .onChange(of: fileSystem.files) { oldFiles, newFiles in
             // Check if currently playing media file still exists

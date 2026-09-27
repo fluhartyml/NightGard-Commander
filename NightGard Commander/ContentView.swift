@@ -1101,9 +1101,9 @@ struct ContentView: View {
     }
 
     private func createNewFolder() {
-        // Trigger folder creation in the active pane
-        // This will be handled by FileBrowserPanel's inline creation
-        print("New folder creation - handled by panel")
+        // Build 108 — this was a print() and nothing else, so ⌘7 never made a folder.
+        // The focused FileBrowserPanel picks this up and opens its inline name field.
+        NotificationCenter.default.post(name: .newFolderInFocusedPane, object: nil)
     }
 
     private func renameSelectedItem() {

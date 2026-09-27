@@ -161,4 +161,5 @@ extension Notification.Name {
     static let flattenMove = Notification.Name("flattenMove")
     static let extractFromLibrary = Notification.Name("extractFromLibrary")
     static let findDuplicates = Notification.Name("findDuplicates")
+    static let newFolderInFocusedPane = Notification.Name("newFolderInFocusedPane")
 }
