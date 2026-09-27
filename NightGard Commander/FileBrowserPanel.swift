@@ -415,6 +415,11 @@ struct FileBrowserPanel: View {
                 Spacer()
             } else if fileSystem.files.isEmpty {
                 VStack {
+                    // Build 108 — the name field used to live only in the non-empty branch,
+                    // so New Folder in an empty folder set its state and showed nothing.
+                    if isCreatingNewFolder || isCreatingNewFile {
+                        newItemRow
+                    }
                     Text("Empty folder")
                         .foregroundColor(.secondary)
                         .padding()
@@ -438,27 +443,7 @@ struct FileBrowserPanel: View {
                 VStack(spacing: 0) {
                     // Inline new item creation row (above table)
                     if isCreatingNewFolder || isCreatingNewFile {
-                        HStack(spacing: 8) {
-                            Image(systemName: isCreatingNewFolder ? "folder.fill" : "doc.fill")
-                                .foregroundColor(isCreatingNewFolder ? .blue : .secondary)
-                                .frame(width: 20)
-
-                            TextField("Name", text: $newItemName)
-                                .textFieldStyle(.plain)
-                                .focused($isNewItemFocused)
-                                .onSubmit {
-                                    createInlineItem()
-                                }
-                                .onKeyPress(.escape) {
-                                    cancelInlineCreation()
-                                    return .handled
-                                }
-                                .onAppear {
-                                    isNewItemFocused = true
-                                }
-                        }
-                        .padding(8)
-                        .background(Color.secondary.opacity(0.1))
+                        newItemRow
                     }
 
                     // File list with ScrollView for full gesture control
@@ -1457,6 +1442,32 @@ struct FileBrowserPanel: View {
         else {
             return ("doc.fill", .secondary)
         }
+    }
+
+    /// The inline name field for New Folder / New File. One copy, drawn by both the
+    /// empty-folder view and the file list.
+    private var newItemRow: some View {
+        HStack(spacing: 8) {
+            Image(systemName: isCreatingNewFolder ? "folder.fill" : "doc.fill")
+                .foregroundColor(isCreatingNewFolder ? .blue : .secondary)
+                .frame(width: 20)
+
+            TextField("Name", text: $newItemName)
+                .textFieldStyle(.plain)
+                .focused($isNewItemFocused)
+                .onSubmit {
+                    createInlineItem()
+                }
+                .onKeyPress(.escape) {
+                    cancelInlineCreation()
+                    return .handled
+                }
+                .onAppear {
+                    isNewItemFocused = true
+                }
+        }
+        .padding(8)
+        .background(Color.secondary.opacity(0.1))
     }
 
     private func startCreatingFolder() {

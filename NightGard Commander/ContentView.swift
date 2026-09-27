@@ -90,11 +90,16 @@ struct ContentView: View {
     }
 
     var copyTooltip: String {
-        isPlaylistMode ? "Copy song to other playlist" : "Copy file to other pane"
+        isPlaylistMode ? "Copy song to other playlist" : "Copy to “\(otherPaneTargetName)”"
     }
 
     var moveTooltip: String {
-        isPlaylistMode ? "Move song to other playlist" : "Move file to other pane"
+        isPlaylistMode ? "Move song to other playlist" : "Move to “\(otherPaneTargetName)”"
+    }
+
+    /// Build 109 — names the real target, so a forgotten highlight shows before anything moves.
+    var otherPaneTargetName: String {
+        URL(fileURLWithPath: otherPaneTargetPath).lastPathComponent
     }
 
     var deleteTooltip: String {
@@ -402,7 +407,7 @@ struct ContentView: View {
                             }
                             return nil
                         },
-                        otherPanePath: rightFileSystem.currentPath,
+                        otherPanePath: targetPath(from: .left),
                         onRefreshOtherPane: {
                             leftFileSystem.loadFiles()
                             rightFileSystem.loadFiles()
@@ -485,7 +490,7 @@ struct ContentView: View {
                             }
                             return nil
                         },
-                        otherPanePath: leftFileSystem.currentPath,
+                        otherPanePath: targetPath(from: .right),
                         onRefreshOtherPane: {
                             leftFileSystem.loadFiles()
                             rightFileSystem.loadFiles()
@@ -939,13 +944,29 @@ struct ContentView: View {
         }
     }
 
+    /// Build 109 — his ask: *"make highlighted folder the target opening takes too long if you
+    /// have many files to sort"*. Exactly ONE folder highlighted in the other pane is the target;
+    /// anything else (nothing, a file, several items) falls back to the folder open there.
+    private var otherPaneTargetPath: String { targetPath(from: focusedPane) }
+
+    /// The target for anything sent out of `source` — the bottom bar and each pane's right-click.
+    private func targetPath(from source: FocusedPane) -> String {
+        let other = source == .left ? rightFileSystem : leftFileSystem
+        let ids = source == .left ? selectedRightItems : selectedLeftItems
+        if ids.count == 1, let id = ids.first,
+           let item = other.files.first(where: { $0.id == id }), item.isDirectory {
+            return item.path
+        }
+        return other.currentPath
+    }
+
     /// Copy the selection from the focused pane (source) to the other pane (target).
     /// Every clash is asked about first — see FileOperationEngine.swift.
     private func copyToOtherPane() {
         let selectedIDs = focusedPane == .left ? selectedLeftItems : selectedRightItems
         let sourceFiles = activeFocusedFileSystem.files.filter { selectedIDs.contains($0.id) }
         guard !sourceFiles.isEmpty else { return }
-        let targetPath = focusedPane == .left ? rightFileSystem.currentPath : leftFileSystem.currentPath
+        let targetPath = otherPaneTargetPath
 
         fileOps.start(.copy,
                       sources: sourceFiles.map { URL(fileURLWithPath: $0.path) },
@@ -959,9 +980,9 @@ struct ContentView: View {
     private func moveToOtherPane() {
         let pane = focusedPane
         let selectedIDs = pane == .left ? selectedLeftItems : selectedRightItems
+        let targetPath = otherPaneTargetPath
         let sourceFiles = activeFocusedFileSystem.files.filter { selectedIDs.contains($0.id) }
         guard !sourceFiles.isEmpty else { return }
-        let targetPath = pane == .left ? rightFileSystem.currentPath : leftFileSystem.currentPath
 
         // DJ CURATION: moving the track that is playing stops it, and the next one plays
         // once the move is done — but only if it really left (it may have been skipped).
@@ -1004,9 +1025,9 @@ struct ContentView: View {
     private func flattenToOtherPane(_ kind: FileOpKind) {
         let pane = focusedPane
         let selectedIDs = pane == .left ? selectedLeftItems : selectedRightItems
+        let targetPath = otherPaneTargetPath
         let sourceFiles = activeFocusedFileSystem.files.filter { selectedIDs.contains($0.id) }
         guard !sourceFiles.isEmpty else { return }
-        let targetPath = pane == .left ? rightFileSystem.currentPath : leftFileSystem.currentPath
         fileOps.start(kind,
                       sources: sourceFiles.map { URL(fileURLWithPath: $0.path) },
                       target: URL(fileURLWithPath: targetPath), mode: .flatten) { _ in
